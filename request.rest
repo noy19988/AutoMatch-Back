@@ -1,0 +1,37 @@
+
+###
+
+GET http://localhost:3000/posts
+
+###
+
+GET http://localhost:3000/posts?owner=Eliav
+
+###
+
+GET http://localhost:3000/posts/6734b0c818a1cf8344804554
+
+###
+
+POST http://localhost:3000/posts
+Content-Type: application/json
+
+{
+    "title": "Hello",
+    "owner": "Kevin",
+    "content": "Hello World..."
+}
+
+###
+
+DELETE http://localhost:3000/posts/6734b0c818a1cf8344804554
+
+
+###
+
+POST http://localhost:3060/auth/lichess/token-login
+Content-Type: application/json
+
+{
+  "lichessToken": "lip_vVjVqXK5qj0HtiSgixla"
+}

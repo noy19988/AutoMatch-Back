@@ -40,6 +40,7 @@ const generateTokens = (user: IUser): { accessToken: string, refreshToken: strin
     const secret = process.env.TOKEN_SECRET;
 
     const accessExp = process.env.TOKEN_EXPIRE ?? '3d';
+    
     const refreshExp = process.env.REFRESH_TOKEN_EXPIRE ?? '7d';
 
     if (!secret) {
@@ -83,7 +84,12 @@ const login = async (req: Request, res: Response) => {
             res.status(400).send("wrong email or password");
             return;
         }
-        const valid = await bcrypt.compare(req.body.password, user.password);
+        const password = req.body.password;
+        if (!password) {
+            res.status(400).send("Password is required");
+            return;
+        }
+        const valid = user.password && await bcrypt.compare(password, user.password);
         if (!valid) {
             res.status(400).send("wrong email or password");
             return;
@@ -191,16 +197,19 @@ type Payload = {
 export const authMiddleware = (req: Request, res: Response, next: NextFunction) => {
     const authorization = req.headers.authorization;
     const token = authorization && authorization.split(" ")[1];
+
     if (!token) {
         res.status(401).send("Access Denied");
         return;
     }
-    if (!process.env.TOKEN_SECRET) {
-        res.status(400).send("Server Error");
+
+    const secret = process.env.TOKEN_SECRET;
+    if (!secret) {
+        res.status(500).send("Server Error");
         return;
     }
 
-    jwt.verify(token, process.env.TOKEN_SECRET, (err, payload) => {
+    jwt.verify(token, secret, (err, payload) => {
         if (err) {
             res.status(401).send("Access Denied");
             return;
