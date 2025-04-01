@@ -1,15 +1,15 @@
 
 ###
 
-GET http://localhost:3000/posts
+GET http://localhost:3060/posts
 
 ###
 
-GET http://localhost:3000/posts?owner=Eliav
+GET http://localhost:3060/posts?owner=Eliav
 
 ###
 
-GET http://localhost:3000/posts/6734b0c818a1cf8344804554
+GET http://localhost:3060/posts/6734b0c818a1cf8344804554
 
 ###
 
@@ -24,7 +24,7 @@ Content-Type: application/json
 
 ###
 
-DELETE http://localhost:3000/posts/6734b0c818a1cf8344804554
+DELETE http://localhost:3060/posts/6734b0c818a1cf8344804554
 
 
 ###
