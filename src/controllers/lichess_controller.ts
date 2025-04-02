@@ -1,12 +1,12 @@
-import axios from 'axios';
-import { Request, Response } from 'express';
-import userModel from '../models/user_model';
-import jwt, { SignOptions } from 'jsonwebtoken';
-import crypto from 'crypto';
-import dotenv from 'dotenv';
+import axios from "axios";
+import { Request, Response } from "express";
+import userModel from "../models/user_model";
+import jwt, { SignOptions } from "jsonwebtoken";
+import crypto from "crypto";
+import dotenv from "dotenv";
 
 // הרחבת session כדי לאפשר אחסון של codeVerifier
-declare module 'express-session' {
+declare module "express-session" {
   interface SessionData {
     codeVerifier?: string;
   }
@@ -21,7 +21,7 @@ const LICHESS_ACCOUNT_URL = "https://lichess.org/api/account";
 const clientId = process.env.LICHESS_CLIENT_ID!;
 const redirectUri = process.env.LICHESS_REDIRECT_URI!;
 const tokenSecret = process.env.TOKEN_SECRET!;
-const tokenExpire = process.env.TOKEN_EXPIRE ?? '3d';
+const tokenExpire = process.env.TOKEN_EXPIRE ?? "3d";
 
 // פונקציה לפירוק משך זמן כמו "3d" לשניות
 const parseDuration = (duration: string): number => {
@@ -81,13 +81,13 @@ const lichessCallback = async (req: Request, res: Response): Promise<void> => {
     const tokenRes = await axios.post<LichessTokenResponse>(
       LICHESS_TOKEN_URL,
       new URLSearchParams({
-        grant_type: 'authorization_code',
+        grant_type: "authorization_code",
         code,
         redirect_uri: redirectUri,
         client_id: clientId,
         code_verifier: codeVerifier,
       }),
-      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+      { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
     );
 
     const accessToken = tokenRes.data.access_token;
@@ -104,19 +104,13 @@ const lichessCallback = async (req: Request, res: Response): Promise<void> => {
       user = await userModel.create({ lichessId });
     }
 
-    const token = jwt.sign(
-      { _id: user._id },
-      tokenSecret,
-      { expiresIn: parseDuration(tokenExpire) } as SignOptions
+    const token = jwt.sign({ _id: user._id }, tokenSecret, {
+      expiresIn: parseDuration(tokenExpire),
+    } as SignOptions);
+
+    res.redirect(
+      `http://localhost:5173/login?token=${token}&userId=${user._id}&lichessId=${user.lichessId}`
     );
-
-    res.json({
-      message: 'Login successful',
-      accessToken: token,
-      userId: user._id,
-      lichessId: user.lichessId
-    });
-
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Lichess login failed" });
@@ -125,5 +119,5 @@ const lichessCallback = async (req: Request, res: Response): Promise<void> => {
 
 export default {
   loginWithLichess,
-  lichessCallback
+  lichessCallback,
 };
