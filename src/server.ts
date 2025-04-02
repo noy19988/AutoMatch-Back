@@ -8,7 +8,7 @@ import session from "express-session";
 import authController from "./routes/auth_route";
 import swaggerJsDoc from "swagger-jsdoc";
 import swaggerUI from "swagger-ui-express";
-import lichessRouter from './routes/lichess_route';
+import lichessRouter from "./routes/lichess_route";
 
 const app = express();
 
