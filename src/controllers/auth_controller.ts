@@ -3,6 +3,8 @@ import userModel, { IUser } from '../models/user_model';
 import bcrypt from 'bcrypt';
 import jwt, { SignOptions } from 'jsonwebtoken';
 import { Document } from 'mongoose';
+import { OAuth2Client } from "google-auth-library";
+
 
 const parseDuration = (duration: string): number => {
     const units: { [key: string]: number } = {
@@ -220,9 +222,45 @@ export const authMiddleware = (req: Request, res: Response, next: NextFunction) 
     });
 };
 
+const client = new OAuth2Client();
+const googleSignin = async (req: Request, res: Response) => {
+  try {
+    const ticket = await client.verifyIdToken({
+      idToken: req.body.credential,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+    const payload = ticket.getPayload();
+    const email = payload?.email;
+    if (email != null) {
+      let user = await userModel.findOne({ email: email });
+      if (user == null) {
+        user = await userModel.create({
+          name: payload?.name,
+          email: email,
+          password: "",
+          imgUrl: payload?.picture,
+        });
+      }
+      const token = await generateTokens(user);
+      res.status(200).send({
+        email: user.email,
+        _id: user._id,
+        ...token,
+      });
+    }
+  } catch (err) {
+    if (err instanceof Error) {
+      res.status(400).send(err.message);
+    } else {
+      res.status(400).send("An unknown error occurred");
+    }
+  }
+};
+
 export default {
     register,
     login,
     logout,
-    refresh
+    refresh,
+    googleSignin,
 };

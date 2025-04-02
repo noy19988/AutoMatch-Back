@@ -61,7 +61,7 @@ import authController from "../controllers/auth_controller";
 *               $ref: '#/components/schemas/User'
 */
 router.post("/register", authController.register);
-
+router.post("/google", authController.googleSignin);
 
 
 /**
