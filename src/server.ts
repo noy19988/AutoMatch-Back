@@ -12,13 +12,13 @@ import lichessRouter from "./routes/lichess_route";
 
 const app = express();
 
-// ✅ Session Middleware
+//Session Middleware
 app.use(
   session({
-    secret: "some_secret_key", // אפשר להוציא ל־.env
+    secret: "some_secret_key", 
     resave: false,
     saveUninitialized: true,
-    cookie: { secure: false }, // dev בלבד. production -> true + https
+    cookie: { secure: false },
   })
 );
 

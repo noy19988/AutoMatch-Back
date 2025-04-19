@@ -2,18 +2,18 @@ import mongoose from "mongoose";
 const Schema = mongoose.Schema;
 
 export interface IUser {
-  email?: string; // הפכנו לאופציונלי כי משתמשים מ-Lichess לא חייבים מייל
-  password?: string; // אותו דבר
+  email?: string; 
+  password?: string; 
   _id?: string;
   refreshToken?: string[];
-  lichessId?: string; // 👈 הוספה חשובה
+  lichessId?: string; 
 }
 
 const userSchema = new Schema<IUser>({
   email: {
     type: String,
     unique: true,
-    sparse: true // מאפשר קיום nullים ועדיין ייחודיות למי שיש ערך
+    sparse: true 
   },
   password: {
     type: String,
@@ -25,7 +25,7 @@ const userSchema = new Schema<IUser>({
   lichessId: {
     type: String,
     unique: true,
-    sparse: true // 🆕 אותו עיקרון כמו email
+    sparse: true 
   },
 });
 
