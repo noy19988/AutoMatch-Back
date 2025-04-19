@@ -80,7 +80,6 @@ const generateTokens = (user: IUser): { accessToken: string, refreshToken: strin
 
 const login = async (req: Request, res: Response) => {
     try {
-        // Verify user & password
         const user = await userModel.findOne({ email: req.body.email });
         if (!user) {
             res.status(400).send("wrong email or password");
