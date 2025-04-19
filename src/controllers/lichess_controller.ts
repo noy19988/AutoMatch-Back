@@ -4,6 +4,7 @@ import userModel from "../models/user_model";
 import jwt, { SignOptions } from "jsonwebtoken";
 import crypto from "crypto";
 import dotenv from "dotenv";
+import { askGeminiRaw } from "../api/GeminiApi";
 
 // הרחבת session כדי לאפשר אחסון של codeVerifier
 declare module "express-session" {
@@ -117,7 +118,98 @@ const lichessCallback = async (req: Request, res: Response): Promise<void> => {
   }
 };
 
+
+const autoMatchWithAI = async (req: Request, res: Response) => {
+  try {
+    const users = await userModel.find({ lichessId: { $exists: true } });
+
+    const enrichedUsers = await Promise.all(
+      users.map(async (user) => {
+        try {
+          const res = await axios.get(`https://lichess.org/api/user/${user.lichessId}`);
+          const data = res.data as LichessUser;
+    
+          const userData = {
+            _id: user._id.toString(),
+            lichessId: user.lichessId,
+            username: data.username,
+            blitzRating: data?.perfs?.blitz?.rating ?? 1500,
+            bulletRating: data?.perfs?.bullet?.rating ?? 1500,
+            rapidRating: data?.perfs?.rapid?.rating ?? 1500,
+            totalGames: data.count?.all ?? 0,
+          };
+    
+          // ✅ הדפסת הנתונים של כל משתמש
+          console.log("🎯 Lichess User Data:", userData);
+    
+          return userData;
+        } catch (err) {
+          console.warn(`⚠️ Failed to fetch data for ${user.lichessId}`, err);
+          return null;
+        }
+      })
+    );
+    
+
+    const players = enrichedUsers.filter((u) => u !== null);
+
+    const prompt = `
+    Here is a list of chess players from Lichess, each with their blitz, bullet, rapid ratings, and total number of games:
+    
+    ${JSON.stringify(players, null, 2)}
+    
+    Please choose two players who would be a balanced and competitive match based on their ratings and total game experience.
+    
+    Return the result in the following JSON format only:
+    {
+      "player1": "<lichessId of player 1>",
+      "player2": "<lichessId of player 2>"
+    }
+      Only return the JSON. No explanation!
+      Do NOT include any markdown formatting (like \`\`\` or \`\`\`json). Only return plain JSON.
+
+    `;
+
+
+    const aiResponse = await askGeminiRaw(prompt);
+
+    const cleaned = cleanJsonFromAI(aiResponse);
+
+    let parsed;
+try {
+  parsed = JSON.parse(cleaned);
+} catch (parseErr) {
+  console.error("❌ Failed to parse Gemini response:", parseErr);
+  console.error("📦 Raw response from AI:", aiResponse);
+  res.status(500).json({ error: "Invalid AI response format." });
+}
+
+    if (parsed.player1 && parsed.player2) {
+      res.status(200).json({
+        message: "AI Match found",
+        match: parsed,
+      });
+    } else {
+      res.status(404).json({ message: "AI could not find a match." });
+    }
+
+  } catch (err) {
+    console.error("AI AutoMatch Error", err);
+    res.status(500).send("Server error");
+  }
+};
+
+function cleanJsonFromAI(raw: string | null): string {
+  return (raw || "")
+    .replace(/```json/g, "")
+    .replace(/```/g, "")
+    .trim();
+}
+
+
+
 export default {
   loginWithLichess,
   lichessCallback,
+  autoMatchWithAI
 };

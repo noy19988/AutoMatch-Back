@@ -35,3 +35,10 @@ Content-Type: application/json
 {
   "lichessToken": "lip_vVjVqXK5qj0HtiSgixla"
 }
+
+
+
+
+### Check AI-based Auto Matchmaking
+GET http://localhost:3060/auth/lichess/matchmaking
+Accept: application/json
