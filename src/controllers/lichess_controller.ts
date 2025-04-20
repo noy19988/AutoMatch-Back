@@ -7,7 +7,6 @@ import dotenv from "dotenv";
 import { askGeminiRaw } from "../api/GeminiApi";
 import TournamentModel from "../models/tournament_model";
 
-// הרחבת session כדי לאפשר אחסון של codeVerifier
 declare module "express-session" {
   interface SessionData {
     codeVerifier?: string;
@@ -32,7 +31,6 @@ const redirectUri = process.env.LICHESS_REDIRECT_URI!;
 const tokenSecret = process.env.TOKEN_SECRET!;
 const tokenExpire = process.env.TOKEN_EXPIRE ?? "3d";
 
-// פונקציה לפירוק משך זמן כמו "3d" לשניות
 const parseDuration = (duration: string): number => {
   const units: { [key: string]: number } = {
     s: 1,
@@ -45,7 +43,6 @@ const parseDuration = (duration: string): number => {
   return parseInt(match[1]) * units[match[2]];
 };
 
-// פונקציות PKCE
 function generateCodeVerifier(): string {
   return crypto.randomBytes(32).toString("base64url");
 }
@@ -64,7 +61,6 @@ interface LichessUser {
   [key: string]: any;
 }
 
-// יצירת URL להפניית המשתמש להתחברות דרך Lichess
 const loginWithLichess = (req: Request, res: Response) => {
   const codeVerifier = generateCodeVerifier();
   const codeChallenge = generateCodeChallenge(codeVerifier);
@@ -75,7 +71,6 @@ const loginWithLichess = (req: Request, res: Response) => {
   res.redirect(authUrl);
 };
 
-// callback מה-lichess
 const lichessCallback = async (req: Request, res: Response): Promise<void> => {
   const code = req.query.code as string;
   const codeVerifier = req.session.codeVerifier;
@@ -155,10 +150,9 @@ const autoMatchWithAI = async (req: Request, res: Response) => {
 
           // ✅ הדפסת הנתונים של כל משתמש
           console.log("🎯 Lichess User Data:", userData);
-
           return userData;
         } catch (err) {
-          console.warn(`⚠️ Failed to fetch data for ${user.lichessId}`, err);
+          console.warn(`Failed to fetch data for ${user.lichessId}`, err);
           return null;
         }
       })
@@ -188,6 +182,7 @@ const autoMatchWithAI = async (req: Request, res: Response) => {
     const cleaned = cleanJsonFromAI(aiResponse);
 
     let parsed;
+
     try {
       parsed = JSON.parse(cleaned);
     } catch (parseErr) {
@@ -195,6 +190,7 @@ const autoMatchWithAI = async (req: Request, res: Response) => {
       console.error("📦 Raw response from AI:", aiResponse);
       res.status(500).json({ error: "Invalid AI response format." });
     }
+
 
     if (parsed.player1 && parsed.player2) {
       res.status(200).json({

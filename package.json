@@ -8,7 +8,9 @@
     "start": "cp .env_dev .env && tsc && node ./dist/src/app.js",
     "test": "cp .env_test .env && jest --detectOpenHandles --forceExit --runInBand",
     "testAuth": "cp .env_test .env && jest --detectOpenHandles --forceExit auth.test.ts",
-    "testPosts": "cp .env_test .env && jest --detectOpenHandles --forceExit posts.test.ts"
+    "testPosts": "cp .env_test .env && jest --detectOpenHandles --forceExit posts.test.ts",
+    "copy-env": "powershell Copy-Item .env_dev -Destination .env",
+    "dev1": "npm run copy-env && nodemon ./src/app.ts"
   },
   "repository": {
     "type": "git",
