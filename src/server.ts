@@ -10,6 +10,8 @@ import swaggerJsDoc from "swagger-jsdoc";
 import swaggerUI from "swagger-ui-express";
 import lichessRouter from "./routes/lichess_route";
 
+import cors from "cors";
+
 const app = express();
 
 //Session Middleware
@@ -21,6 +23,15 @@ app.use(
     cookie: { secure: false },
   })
 );
+app.use(
+  cors({
+    origin: "http://localhost:5173",
+    credentials: true,
+  })
+);
+
+app.use(cors({ origin: "http://localhost:5173", credentials: true }));
+app.use(express.json());
 
 const db = mongoose.connection;
 db.on("error", console.error);
@@ -39,6 +50,7 @@ app.use((req, res, next) => {
 
 app.use("/auth", authController);
 app.use("/auth/lichess", lichessRouter);
+app.use("/api/lichess", lichessRouter);
 
 app.get("/about", (_, res) => {
   res.send("Hello World!");
