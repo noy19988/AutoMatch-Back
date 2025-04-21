@@ -4,6 +4,10 @@ import TournamentModel from "../models/tournament_model";
 
 const router = express.Router();
 
+declare global {
+  var lichessUserCache: Map<string, { timestamp: number; data: any }>;
+}
+
 type Player = {
   id: string;
   username: string;
@@ -75,5 +79,41 @@ router.post(
   "/tournaments/:id/start",
   lichessController.startTournament as express.RequestHandler
 );
+
+// /routes/lichess_routes.ts
+router.post(
+  "/tournaments/:tournamentId/round/:roundIndex/match/:matchIndex/updateResult",
+  lichessController.updateMatchResult as express.RequestHandler
+);
+
+router.get("/lichess/game/:gameId", async (req, res) => {
+  try {
+    await lichessController.getGameResult(req, res); // Now calls the controller directly
+  } catch (error) {
+    console.error("Error in /lichess/game/:gameId route:", error);
+    res
+      .status(500)
+      .json({ error: "An error occurred while fetching the game result" });
+  }
+});
+router.get("/api/lichess/game/:gameUrl", async (req, res) => {
+  const gameUrl = req.params.gameUrl;
+
+  try {
+    const response = await fetch(
+      `https://lichess.org/api/game/${gameUrl}/state`
+    );
+    const gameState = await response.json();
+
+    if (gameState.status === "over") {
+      res.json(gameState); // Return the game result when finished
+    } else {
+      res.json({ status: "waiting" }); // Return waiting if the game is still ongoing
+    }
+  } catch (error) {
+    console.error("Error fetching game result:", error);
+    res.status(500).send("Error fetching game result");
+  }
+});
 
 export default router;
