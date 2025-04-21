@@ -7,6 +7,7 @@ import dotenv from "dotenv";
 import { askGeminiRaw } from "../api/GeminiApi";
 import TournamentModel from "../models/tournament_model";
 
+// הרחבת session כדי לאפשר אחסון של codeVerifier
 declare module "express-session" {
   interface SessionData {
     codeVerifier?: string;
@@ -14,10 +15,10 @@ declare module "express-session" {
 }
 
 interface LichessChallengeResponse {
-  challenge: {
-    id: string;
-    // add more fields if needed
-  };
+  id: string;
+  whiteUrl: string;
+  blackUrl: string;
+  // add more fields if needed
 }
 
 dotenv.config();
@@ -31,6 +32,7 @@ const redirectUri = process.env.LICHESS_REDIRECT_URI!;
 const tokenSecret = process.env.TOKEN_SECRET!;
 const tokenExpire = process.env.TOKEN_EXPIRE ?? "3d";
 
+// פונקציה לפירוק משך זמן כמו "3d" לשניות
 const parseDuration = (duration: string): number => {
   const units: { [key: string]: number } = {
     s: 1,
@@ -43,6 +45,7 @@ const parseDuration = (duration: string): number => {
   return parseInt(match[1]) * units[match[2]];
 };
 
+// פונקציות PKCE
 function generateCodeVerifier(): string {
   return crypto.randomBytes(32).toString("base64url");
 }
@@ -61,16 +64,18 @@ interface LichessUser {
   [key: string]: any;
 }
 
+// יצירת URL להפניית המשתמש להתחברות דרך Lichess
 const loginWithLichess = (req: Request, res: Response) => {
   const codeVerifier = generateCodeVerifier();
   const codeChallenge = generateCodeChallenge(codeVerifier);
 
   req.session.codeVerifier = codeVerifier;
 
-  const authUrl = `${LICHESS_AUTHORIZE_URL}?response_type=code&client_id=${clientId}&redirect_uri=${redirectUri}&scope=challenge:write board:play bot:play&code_challenge=${codeChallenge}&code_challenge_method=S256`;
+  const authUrl = `${LICHESS_AUTHORIZE_URL}?response_type=code&client_id=${clientId}&redirect_uri=${redirectUri}&scope=challenge:write%20board:play%20bot:play&code_challenge=${codeChallenge}&code_challenge_method=S256`;
   res.redirect(authUrl);
 };
 
+// callback מה-lichess
 const lichessCallback = async (req: Request, res: Response): Promise<void> => {
   const code = req.query.code as string;
   const codeVerifier = req.session.codeVerifier;
@@ -150,9 +155,10 @@ const autoMatchWithAI = async (req: Request, res: Response) => {
 
           // ✅ הדפסת הנתונים של כל משתמש
           console.log("🎯 Lichess User Data:", userData);
+
           return userData;
         } catch (err) {
-          console.warn(`Failed to fetch data for ${user.lichessId}`, err);
+          console.warn("`⚠️ Failed to fetch data for ${user.lichessId}`", err);
           return null;
         }
       })
@@ -173,8 +179,7 @@ const autoMatchWithAI = async (req: Request, res: Response) => {
       "player2": "<lichessId of player 2>"
     }
       Only return the JSON. No explanation!
-      Do NOT include any markdown formatting (like \`\`\` or \`\`\`json). Only return plain JSON.
-
+      Do NOT include any markdown formatting (like \` or: any \`json). Only return plain JSON.
     `;
 
     const aiResponse = await askGeminiRaw(prompt);
@@ -182,7 +187,6 @@ const autoMatchWithAI = async (req: Request, res: Response) => {
     const cleaned = cleanJsonFromAI(aiResponse);
 
     let parsed;
-
     try {
       parsed = JSON.parse(cleaned);
     } catch (parseErr) {
@@ -190,7 +194,6 @@ const autoMatchWithAI = async (req: Request, res: Response) => {
       console.error("📦 Raw response from AI:", aiResponse);
       res.status(500).json({ error: "Invalid AI response format." });
     }
-
 
     if (parsed.player1 && parsed.player2) {
       res.status(200).json({
@@ -207,10 +210,7 @@ const autoMatchWithAI = async (req: Request, res: Response) => {
 };
 
 function cleanJsonFromAI(raw: string | null): string {
-  return (raw || "")
-    .replace(/```json/g, "")
-    .replace(/```/g, "")
-    .trim();
+  return (raw || "").replace(/json/g, "").replace(/ /g, "").trim();
 }
 
 const createTournament = async (req: Request, res: Response) => {
@@ -218,9 +218,7 @@ const createTournament = async (req: Request, res: Response) => {
   console.log("🎯 Received tournament body:", req.body);
 
   if (!createdBy || !Array.isArray(playerIds) || playerIds.length < 1) {
-    return res
-      .status(400)
-      .json({ error: "Missing or invalid tournament input." });
+    return res.status(400).json({ error: "At least one player required." });
   }
 
   try {
@@ -231,48 +229,11 @@ const createTournament = async (req: Request, res: Response) => {
         .json({ error: "Tournament creator not authorized with Lichess." });
     }
 
-    const shuffled = playerIds.sort(() => 0.5 - Math.random());
-    const pairs = [];
-    for (let i = 0; i < shuffled.length - 1; i += 2) {
-      pairs.push([shuffled[i], shuffled[i + 1]]);
-    }
-
-    const matches = await Promise.all(
-      pairs.map(async ([p1, p2]) => {
-        try {
-          const response = await axios.post<LichessChallengeResponse>(
-            `https://lichess.org/api/challenge/${p2}`,
-            {
-              rated: false,
-              clock: { limit: 300, increment: 0 },
-              variant: "standard",
-            },
-            {
-              headers: {
-                Authorization: `Bearer ${creator.lichessAccessToken}`,
-              },
-            }
-          );
-
-          return {
-            player1: p1,
-            player2: p2,
-            lichessUrl: `https://lichess.org/${response.data.challenge.id}`,
-          };
-        } catch (err) {
-          console.error(`Failed to create game between ${p1} and ${p2}`, err);
-          return null;
-        }
-      })
-    );
-
-    const validMatches = matches.filter(Boolean);
-
     const tournament = await TournamentModel.create({
       createdBy,
       playerIds,
       maxPlayers: parseInt(maxPlayers, 10),
-      rounds: [{ matches: validMatches }],
+      rounds: [],
       winner: null,
     });
 
@@ -282,7 +243,7 @@ const createTournament = async (req: Request, res: Response) => {
       lobbyUrl: `http://localhost:5173/lobby/${tournament._id}`,
     });
   } catch (error) {
-    console.error("Error creating tournament:", error);
+    console.error("❌ Error creating tournament:", error);
     res.status(500).json({ error: "Internal server error." });
   }
 };
@@ -325,16 +286,39 @@ const getTournamentById = async (req: Request, res: Response) => {
 const startTournament = async (req: Request, res: Response) => {
   const { id } = req.params;
   const tournament = await TournamentModel.findById(id);
-  if (!tournament) return res.status(404).json({ error: "Not found" });
 
+  if (!tournament) {
+    return res.status(404).json({ error: "Tournament not found" });
+  }
+
+  // 🔍 Debug logging
+  console.log("🔍 Checking startTournament:", {
+    rounds: tournament.rounds.length,
+    currentPlayers: tournament.playerIds.length,
+    maxPlayers: tournament.maxPlayers,
+  });
+
+  // ❌ Prevent re-starting a tournament
+  if (tournament.rounds.length > 0) {
+    return res.status(400).json({ error: "Tournament already started." });
+  }
+
+  // ❌ Prevent start if lobby not full
   if (tournament.playerIds.length !== tournament.maxPlayers) {
     return res.status(400).json({ error: "Lobby not full" });
   }
 
+  // ✅ Validate creator
   const creator = await userModel.findById(tournament.createdBy);
-  if (!creator) return res.status(403).json({ error: "Creator not found" });
+  if (!creator || !creator.lichessAccessToken) {
+    return res
+      .status(403)
+      .json({ error: "Creator not authorized with Lichess" });
+  }
 
-  const shuffled = tournament.playerIds.sort(() => 0.5 - Math.random());
+  // ✅ Shuffle and create matches
+  const validPlayers = tournament.playerIds.filter(Boolean);
+  const shuffled = validPlayers.sort(() => 0.5 - Math.random());
   const matches = [];
 
   for (let i = 0; i < shuffled.length - 1; i += 2) {
@@ -343,7 +327,7 @@ const startTournament = async (req: Request, res: Response) => {
 
     try {
       const response = await axios.post<LichessChallengeResponse>(
-        `https://lichess.org/api/challenge/${p2}`,
+        "https://lichess.org/api/challenge/open",
         {
           rated: false,
           clock: { limit: 300, increment: 0 },
@@ -356,27 +340,25 @@ const startTournament = async (req: Request, res: Response) => {
         }
       );
 
-      if (!response.data?.challenge?.id) {
-        console.error(
-          `❌ No challenge ID returned from Lichess for ${p2}`,
-          response.data
-        );
-        continue;
-      }
+      const challenge = response.data;
 
       matches.push({
         player1: p1,
         player2: p2,
-        lichessUrl: `https://lichess.org/${response.data.challenge.id}`,
+        lichessUrl: `https://lichess.org/${challenge.id}`,
+        whiteUrl: challenge.whiteUrl,
+        blackUrl: challenge.blackUrl,
+        result: "pending",
       });
     } catch (err) {
-      console.error(`❌ Failed to challenge ${p2}`, err);
+      console.error(`❌ Failed to create game for ${p1} vs ${p2}:`, err);
     }
   }
 
   const gameUrls = matches.map((m) => m.lichessUrl);
   console.log("🎯 Chess games created:", gameUrls);
 
+  // ✅ Save matches to tournament
   await TournamentModel.findByIdAndUpdate(tournament._id, {
     $push: { rounds: { matches } },
   });
