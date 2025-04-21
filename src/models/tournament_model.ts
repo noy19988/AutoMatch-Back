@@ -5,6 +5,8 @@ interface Match {
   player2: string;
   lichessUrl: string;
   result?: "pending" | "player1" | "player2";
+  whiteUrl: string;
+  blackUrl: string;
 }
 
 interface Round {
@@ -24,6 +26,8 @@ const matchSchema = new Schema<Match>(
     player1: { type: String, required: true },
     player2: { type: String, required: true },
     lichessUrl: { type: String, required: true },
+    whiteUrl: { type: String, required: true },
+    blackUrl: { type: String, required: true },
   },
   { _id: false }
 );
