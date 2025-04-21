@@ -4,7 +4,7 @@ interface Match {
   player1: string;
   player2: string;
   lichessUrl: string;
-  result?: "pending" | "player1" | "player2";
+  result?: "pending" | "player1" | "player2" | "draw";
   whiteUrl: string;
   blackUrl: string;
 }
@@ -39,12 +39,13 @@ const roundSchema = new Schema<Round>(
   { _id: false }
 );
 
-const tournamentSchema = new Schema<TournamentDocument>({
-  createdBy: { type: Schema.Types.ObjectId, ref: "User", required: true },
-  playerIds: { type: [String], required: true },
-  rounds: { type: [roundSchema], default: [] },
-  winner: { type: String, default: null },
-  maxPlayers: { type: Number, default: 8 },
+const tournamentSchema = new Schema({
+  createdBy: { type: String, required: true },
+  playerIds: [String],
+  maxPlayers: Number,
+  rounds: [Object], // Your rounds array here
+  winner: String,
+  status: { type: String, enum: ["active", "completed"], default: "active" }, // Add a status field
 });
 
 export default mongoose.model<TournamentDocument>(

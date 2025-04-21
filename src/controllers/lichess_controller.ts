@@ -21,6 +21,15 @@ interface LichessChallengeResponse {
   // add more fields if needed
 }
 
+interface LichessGameExport {
+  winner?: "white" | "black";
+  status?: string;
+  players: {
+    white?: { user?: { id: string } };
+    black?: { user?: { id: string } };
+  };
+}
+
 dotenv.config();
 
 const LICHESS_AUTHORIZE_URL = "https://lichess.org/oauth";
@@ -229,12 +238,28 @@ const createTournament = async (req: Request, res: Response) => {
         .json({ error: "Tournament creator not authorized with Lichess." });
     }
 
+    // Check if a completed tournament exists with the same parameters
+    const existingTournament = await TournamentModel.findOne({
+      createdBy,
+      maxPlayers,
+      status: "completed", // Only check for completed tournaments
+    });
+
+    if (existingTournament) {
+      console.log("✅ Found a completed tournament. It can be replaced.");
+      // Optionally delete the completed tournament
+      await TournamentModel.deleteOne({ _id: existingTournament._id });
+      console.log("🧹 Deleted the completed tournament:", existingTournament);
+    }
+
+    // Proceed with tournament creation
     const tournament = await TournamentModel.create({
       createdBy,
       playerIds,
       maxPlayers: parseInt(maxPlayers, 10),
       rounds: [],
       winner: null,
+      status: "active", // Mark the new tournament as active
     });
 
     res.status(201).json({
@@ -247,7 +272,6 @@ const createTournament = async (req: Request, res: Response) => {
     res.status(500).json({ error: "Internal server error." });
   }
 };
-
 const joinLobby = async (req: Request, res: Response) => {
   const { username } = req.body;
   const { id } = req.params;
@@ -286,24 +310,14 @@ const getTournamentById = async (req: Request, res: Response) => {
 const startTournament = async (req: Request, res: Response) => {
   const { id } = req.params;
   const tournament = await TournamentModel.findById(id);
+  if (!tournament) return res.status(404).json({ error: "Not found" });
 
-  if (!tournament) {
-    return res.status(404).json({ error: "Tournament not found" });
-  }
-
-  // 🔍 Debug logging
-  console.log("🔍 Checking startTournament:", {
-    rounds: tournament.rounds.length,
-    currentPlayers: tournament.playerIds.length,
-    maxPlayers: tournament.maxPlayers,
-  });
-
-  // ❌ Prevent re-starting a tournament
+  // ✅ Prevent duplicate starts
   if (tournament.rounds.length > 0) {
     return res.status(400).json({ error: "Tournament already started." });
   }
 
-  // ❌ Prevent start if lobby not full
+  // ✅ Prevent starting unless lobby is full
   if (tournament.playerIds.length !== tournament.maxPlayers) {
     return res.status(400).json({ error: "Lobby not full" });
   }
@@ -316,12 +330,21 @@ const startTournament = async (req: Request, res: Response) => {
       .json({ error: "Creator not authorized with Lichess" });
   }
 
-  // ✅ Shuffle and create matches
   const validPlayers = tournament.playerIds.filter(Boolean);
+
+  // 🔀 Shuffle players
   const shuffled = validPlayers.sort(() => 0.5 - Math.random());
   const matches = [];
 
-  for (let i = 0; i < shuffled.length - 1; i += 2) {
+  // 🧠 If odd number, remove 1 player and log (optional)
+  if (shuffled.length % 2 !== 0) {
+    const byePlayer = shuffled.pop();
+    console.log(`🚨 Player ${byePlayer} gets a bye this round`);
+    // You can store byePlayer somewhere if needed
+  }
+
+  // ♟️ Pair players and create matches
+  for (let i = 0; i < shuffled.length; i += 2) {
     const p1 = shuffled[i];
     const p2 = shuffled[i + 1];
 
@@ -358,12 +381,196 @@ const startTournament = async (req: Request, res: Response) => {
   const gameUrls = matches.map((m) => m.lichessUrl);
   console.log("🎯 Chess games created:", gameUrls);
 
-  // ✅ Save matches to tournament
+  // ✅ Save all matches in round 1
   await TournamentModel.findByIdAndUpdate(tournament._id, {
     $push: { rounds: { matches } },
   });
 
   res.json({ message: "Tournament started", matches });
+};
+
+// /controllers/lichess_controller.ts
+
+const updateMatchResult = async (req: Request, res: Response) => {
+  const { tournamentId, roundIndex, matchIndex } = req.params;
+
+  try {
+    const tournament = await TournamentModel.findById(tournamentId);
+    if (!tournament)
+      return res.status(404).json({ error: "Tournament not found" });
+
+    const round = tournament.rounds[+roundIndex];
+    if (!round) return res.status(404).json({ error: "Round not found" });
+
+    const match = round.matches[+matchIndex];
+    if (!match) return res.status(404).json({ error: "Match not found" });
+
+    const gameId = match.lichessUrl.split("/").pop(); // Extract game ID
+    const creator = await userModel.findById(tournament.createdBy);
+    if (!creator?.lichessAccessToken) {
+      return res
+        .status(403)
+        .json({ error: "Creator is not authorized with Lichess" });
+    }
+
+    // 🔍 Fetch game result from Lichess
+    const response = await axios.get<LichessGameExport>(
+      `https://lichess.org/game/export/${gameId}`,
+      {
+        headers: {
+          Authorization: `Bearer ${creator.lichessAccessToken}`,
+        },
+      }
+    );
+
+    const data = response.data;
+
+    const winnerColor = data.winner; // "white" or "black"
+    const whiteId = data.players.white?.user?.id?.toLowerCase();
+    const blackId = data.players.black?.user?.id?.toLowerCase();
+
+    const p1 = match.player1.toLowerCase();
+    const p2 = match.player2.toLowerCase();
+
+    let winner: "player1" | "player2" | "draw" | null = null;
+
+    if (winnerColor === "white" && whiteId === p1) winner = "player1";
+    else if (winnerColor === "white" && whiteId === p2) winner = "player2";
+    else if (winnerColor === "black" && blackId === p1) winner = "player1";
+    else if (winnerColor === "black" && blackId === p2) winner = "player2";
+    else if (!winnerColor && data.status === "draw") winner = "draw";
+
+    if (!winner) {
+      return res.status(400).json({
+        error: "Could not determine winner",
+        info: { whiteId, blackId, winnerColor, p1, p2 },
+      });
+    }
+
+    match.result = winner;
+    await tournament.save();
+
+    res.json({
+      message: "Match result updated",
+      winner,
+      matchIndex,
+      white: whiteId,
+      black: blackId,
+    });
+  } catch (err) {
+    console.error("❌ Failed to update match result:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+};
+
+export const getGameResult = async (req: Request, res: Response) => {
+  const { gameId } = req.params;
+
+  try {
+    // First try to get the game status using the games API
+    try {
+      interface GameStatusResponse {
+        status: string;
+      }
+
+      const statusResponse = await axios.get<GameStatusResponse>(
+        `https://lichess.org/api/games/export/${gameId}`,
+        {
+          headers: {
+            Accept: "application/json", // Request JSON format
+          },
+          params: {
+            moves: false, // We don't need the moves
+            clocks: false, // We don't need the clocks
+            evals: false, // We don't need the evaluations
+          },
+        }
+      );
+
+      // If we get a valid JSON response, extract the status
+      if (statusResponse.data) {
+        const { status } = statusResponse.data;
+        return res.json({ status });
+      }
+    } catch (exportError) {
+      console.log("Failed with export API, trying status API:", exportError);
+      // If the first method fails, continue to the next
+    }
+
+    // Alternative method: check if the game exists using status API
+    try {
+      const gameResponse = await axios.get(
+        `https://lichess.org/api/game/export/${gameId}?literate=true`,
+        {
+          responseType: "text", // Accept any response type as text
+        }
+      );
+
+      // If we get here, the game exists and we can extract status from response
+      // This might be a PGN file or HTML, so we need to parse manually
+      const responseText = gameResponse.data;
+
+      // Try to extract status from the response
+      let status = "unknown";
+
+      // Check if this is a PGN file and extract the status from the headers
+      if (
+        typeof responseText === "string" &&
+        responseText.includes("[Result ")
+      ) {
+        const resultMatch = responseText.match(/\[Result "(.*?)"\]/);
+        if (resultMatch && resultMatch[1]) {
+          const result = resultMatch[1];
+          // Convert PGN result to status
+          if (result === "1-0") status = "white wins";
+          else if (result === "0-1") status = "black wins";
+          else if (result === "1/2-1/2") status = "draw";
+          else status = "ongoing";
+        }
+      }
+
+      // Try to extract status from HTML (if that's what we got)
+      if (
+        typeof responseText === "string" &&
+        responseText.includes("<title>")
+      ) {
+        if (
+          responseText.includes("white won") ||
+          responseText.includes("White won")
+        ) {
+          status = "white wins";
+        } else if (
+          responseText.includes("black won") ||
+          responseText.includes("Black won")
+        ) {
+          status = "black wins";
+        } else if (
+          responseText.includes("draw") ||
+          responseText.includes("Draw")
+        ) {
+          status = "draw";
+        } else if (
+          responseText.includes("ongoing") ||
+          responseText.includes("Ongoing")
+        ) {
+          status = "ongoing";
+        } else if (
+          responseText.includes("aborted") ||
+          responseText.includes("Aborted")
+        ) {
+          status = "aborted";
+        }
+      }
+
+      return res.json({ status });
+    } catch (err) {
+      // If both methods fail, the game likely doesn't exist
+      return res.status(404).json({ error: "Game not found" });
+    }
+  } catch (err) {
+    console.error("Error fetching game result from Lichess:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
 };
 export default {
   loginWithLichess,
@@ -373,4 +580,6 @@ export default {
   createTournament,
   getTournamentById,
   startTournament,
+  updateMatchResult,
+  getGameResult,
 };

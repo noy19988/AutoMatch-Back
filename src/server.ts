@@ -17,7 +17,7 @@ const app = express();
 //Session Middleware
 app.use(
   session({
-    secret: "some_secret_key", 
+    secret: "some_secret_key",
     resave: false,
     saveUninitialized: true,
     cookie: { secure: false },
@@ -51,6 +51,7 @@ app.use((req, res, next) => {
 app.use("/auth", authController);
 app.use("/auth/lichess", lichessRouter);
 app.use("/api/lichess", lichessRouter);
+app.use(lichessRouter);
 
 app.get("/about", (_, res) => {
   res.send("Hello World!");
