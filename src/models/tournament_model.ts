@@ -1,14 +1,17 @@
 import mongoose, { Document, Schema } from "mongoose";
 
+// Match Schema
 interface Match {
   player1: string;
   player2: string;
   lichessUrl: string;
-  result?: "pending" | "player1" | "player2" | "draw";
+  result?: String;
   whiteUrl: string;
   blackUrl: string;
+  winner?: string | null; // Added winner field to store the winner
 }
 
+// Round Schema
 interface Round {
   matches: Match[];
 }
@@ -16,9 +19,11 @@ interface Round {
 export interface TournamentDocument extends Document {
   createdBy: mongoose.Types.ObjectId;
   playerIds: string[];
+  rated: boolean;
   rounds: Round[];
   winner: string | null;
   maxPlayers: number;
+  status: "active" | "completed"; // Status field added
 }
 
 const matchSchema = new Schema<Match>(
@@ -28,6 +33,10 @@ const matchSchema = new Schema<Match>(
     lichessUrl: { type: String, required: true },
     whiteUrl: { type: String, required: true },
     blackUrl: { type: String, required: true },
+    result: {
+      type: String,
+    },
+    winner: { type: String, default: null },
   },
   { _id: false }
 );
@@ -39,15 +48,22 @@ const roundSchema = new Schema<Round>(
   { _id: false }
 );
 
-const tournamentSchema = new Schema({
-  createdBy: { type: String, required: true },
-  playerIds: [String],
-  maxPlayers: Number,
-  rounds: [Object], // Your rounds array here
-  winner: String,
-  status: { type: String, enum: ["active", "completed"], default: "active" }, // Add a status field
-});
+// Tournament Schema
+const tournamentSchema = new Schema(
+  {
+    tournamentName: { type: String, required: true },
+    createdBy: { type: String, required: true },
+    playerIds: [String],
+    maxPlayers: Number,
+    rated: { type: Boolean, default: true },
+    rounds: [roundSchema], // Corrected to an array of rounds
+    winner: { type: String, default: null }, // Tournament winner
+    status: { type: String, enum: ["active", "completed"], default: "active" }, // Add a status field to indicate whether the tournament is active or completed
+  },
+  { timestamps: true }
+);
 
+// This model will allow us to perform CRUD operations for Tournament
 export default mongoose.model<TournamentDocument>(
   "Tournament",
   tournamentSchema
