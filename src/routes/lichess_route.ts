@@ -82,8 +82,8 @@ router.post(
 
 // /routes/lichess_routes.ts
 router.post(
-  "/tournaments/:tournamentId/round/:roundIndex/match/:matchIndex/updateResult",
-  lichessController.updateMatchResult as express.RequestHandler
+  "/tournaments/updateMatchResultByLichessUrl",
+  lichessController.updateMatchResultByLichessUrl as express.RequestHandler
 );
 
 router.get("/lichess/game/:gameId", async (req, res) => {
