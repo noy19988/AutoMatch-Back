@@ -69,7 +69,6 @@ const generateTokens = (user) => {
 };
 const login = async (req, res) => {
     try {
-        // Verify user & password
         const user = await user_model_1.default.findOne({ email: req.body.email });
         if (!user) {
             res.status(400).send("wrong email or password");
@@ -161,7 +160,6 @@ const refresh = async (req, res) => {
             res.status(400).send("Access Denied");
             return;
         }
-        // Send response
         res.status(200).send({
             accessToken: tokens.accessToken,
             refreshToken: tokens.refreshToken

@@ -68,8 +68,25 @@ const options = {
     servers: [
       {
         url: `${process.env.BASE_URL}:${process.env.PORT}`,
+        description: "Environment-based (from .env)"
       },
-    ],
+      {
+        url: "https://automatch.cs.colman.ac.il",
+        description: "Production (HTTPS)"
+      },
+      {
+        url: "http://automatch.cs.colman.ac.il",
+        description: "Production (HTTP - fallback)"
+      },
+      {
+        url: "http://automatch.cs.colman.ac.il:3060",
+        description: "Dev direct access (HTTP with port)"
+      },
+      {
+        url: "http://localhost:3060",
+        description: "Local development"
+      }
+    ]
   },
   apis: ["./src/routes/*.ts"],
 };

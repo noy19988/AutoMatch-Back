@@ -13,14 +13,21 @@ const auth_route_1 = __importDefault(require("./routes/auth_route"));
 const swagger_jsdoc_1 = __importDefault(require("swagger-jsdoc"));
 const swagger_ui_express_1 = __importDefault(require("swagger-ui-express"));
 const lichess_route_1 = __importDefault(require("./routes/lichess_route"));
+const cors_1 = __importDefault(require("cors"));
 const app = (0, express_1.default)();
-// ✅ Session Middleware
+//Session Middleware
 app.use((0, express_session_1.default)({
-    secret: "some_secret_key", // אפשר להוציא ל־.env
+    secret: "some_secret_key",
     resave: false,
     saveUninitialized: true,
-    cookie: { secure: false }, // dev בלבד. production -> true + https
+    cookie: { secure: false },
 }));
+app.use((0, cors_1.default)({
+    origin: "http://localhost:5173",
+    credentials: true,
+}));
+app.use((0, cors_1.default)({ origin: "http://localhost:5173", credentials: true }));
+app.use(express_1.default.json());
 const db = mongoose_1.default.connection;
 db.on("error", console.error);
 db.once("open", () => console.log("Connected to Database"));
@@ -35,6 +42,8 @@ app.use((req, res, next) => {
 });
 app.use("/auth", auth_route_1.default);
 app.use("/auth/lichess", lichess_route_1.default);
+app.use("/api/lichess", lichess_route_1.default);
+app.use(lichess_route_1.default);
 app.get("/about", (_, res) => {
     res.send("Hello World!");
 });
@@ -49,8 +58,25 @@ const options = {
         servers: [
             {
                 url: `${process.env.BASE_URL}:${process.env.PORT}`,
+                description: "Environment-based (from .env)"
             },
-        ],
+            {
+                url: "https://automatch.cs.colman.ac.il",
+                description: "Production (HTTPS)"
+            },
+            {
+                url: "http://automatch.cs.colman.ac.il",
+                description: "Production (HTTP - fallback)"
+            },
+            {
+                url: "http://automatch.cs.colman.ac.il:3060",
+                description: "Dev direct access (HTTP with port)"
+            },
+            {
+                url: "http://localhost:3060",
+                description: "Local development"
+            }
+        ]
     },
     apis: ["./src/routes/*.ts"],
 };

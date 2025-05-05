@@ -1,15 +1,24 @@
 import appInit from "./server";
-import dotenv from "dotenv";
+import https from "https"
+import fs from "fs"
+import path from "path";
 
-dotenv.config();
-
-const port = process.env.PORT || 3000;
+const port = process.env.PORT;
 
 const tmpFunc = async () => {
   const app = await appInit();
-  app.listen(port, () => {
-    console.log(`Server running at ${process.env.BASE_URL}:${port}`);
-  });
+  if (process.env.NODE_ENV != "production") {
+    app.listen(port, () => {
+      console.log(`Example app listening at http://localhost:${port}`);
+    });
+  } else {
+
+    const prop = {
+      key: fs.readFileSync(path.join(__dirname, "..", "client-key.pem")),
+      cert: fs.readFileSync(path.join(__dirname, "..", "client-cert.pem"))
+    }
+    https.createServer(prop, app).listen(port)
+  }
 };
 
 tmpFunc();
