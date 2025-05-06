@@ -19448,7 +19448,7 @@
           "type": "challengeDeclined",
           "challenge": {
             "id": "BDQR876K",
-            "url": "http://lichess.org/BDQR876K",
+            "url": "https://lichess.org/BDQR876K",
             "status": "declined",
             "challenger": {
               "id": "pedro",

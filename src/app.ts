@@ -19,7 +19,7 @@ const tmpFunc = async () => {
   if (process.env.NODE_ENV !== "production") {
     const port = process.env.PORT || 3060;
     app.listen(port, () => {
-      console.log(`🟢 Dev server listening at http://localhost:${port}`);
+      console.log(`🟢 Dev server listening at https://localhost:${port}`);
     });
   } else {
     // הגדרת HTTPS
@@ -28,15 +28,17 @@ const tmpFunc = async () => {
       cert: fs.readFileSync(path.join(__dirname, "..", "client-cert.pem")),
     };
 
-    // שרת HTTPS על פורט 443
-    https.createServer(httpsOptions, app).listen(443, () => {
-      console.log("🔒 HTTPS server running on port 443");
-    });
-
     // שרת HTTP על פורט 80
     http.createServer(app).listen(80, () => {
       console.log("🌐 HTTP server running on port 80");
     });
+
+
+     // שרת HTTPS על פורט 443
+     https.createServer(httpsOptions, app).listen(443, () => {
+      console.log("🔒 HTTPS server running on port 443");
+    });
+
   }
 };
 

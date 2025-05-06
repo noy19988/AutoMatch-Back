@@ -10,21 +10,19 @@ import authController from "./routes/auth_route";
 import swaggerJsDoc from "swagger-jsdoc";
 import swaggerUI from "swagger-ui-express";
 import lichessRouter from "./routes/lichess_route";
-
 import cors from "cors";
 
 const app = express();
 
-// ✅ הגשת קבצי פרונט מהתיקייה ../front (חייב לבוא לפני הראוטים האחרים)
-const frontendPath = path.join(__dirname, "..", "front");
-app.use(express.static(frontendPath));
+// 🟡 הגדרת CORS
+app.use(
+  cors({
+    origin: "https://automatch.cs.colman.ac.il",
+    credentials: true,
+  })
+);
 
-// ✅ כל ראוט שלא נמצא - מחזיר את index.html
-app.get("*", (req, res) => {
-  res.sendFile(path.join(frontendPath, "index.html"));
-});
-
-//Session Middleware
+// 🟡 Session Middleware
 app.use(
   session({
     secret: "some_secret_key",
@@ -34,19 +32,12 @@ app.use(
   })
 );
 
-// CORS
-app.use(
-  cors({
-    origin: "http://localhost:5173",
-    credentials: true,
-  })
-);
-
+// 🟡 JSON + bodyParser
 app.use(express.json());
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// הגדרות CORS נוספות
+// 🟡 הגדרות CORS נוספות
 app.use((req, res, next) => {
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Methods", "*");
@@ -54,17 +45,13 @@ app.use((req, res, next) => {
   next();
 });
 
-// ראוטים
+// ✅ ראוטים API
 app.use("/auth", authController);
 app.use("/auth/lichess", lichessRouter);
 app.use("/api/lichess", lichessRouter);
-app.use(lichessRouter);
+app.use(lichessRouter); // אפשר להוריד אם מיותר
 
-app.get("/about", (_, res) => {
-  res.send("Hello World!");
-});
-
-// Swagger
+// ✅ Swagger Docs
 const options = {
   swaggerDefinition: {
     openapi: "3.0.0",
@@ -103,7 +90,16 @@ const options = {
 const specs = swaggerJsDoc(options);
 app.use("/api-docs", swaggerUI.serve, swaggerUI.setup(specs));
 
-// MongoDB connect + return app
+// ✅ הגשת קבצי פרונט רק אחרי הראוטים!
+const frontendPath = path.join(__dirname, "..", "front");
+app.use(express.static(frontendPath));
+
+// ✅ כל route שלא נמצא - מחזיר את index.html (ל־React)
+app.get("*", (req, res) => {
+  res.sendFile(path.join(frontendPath, "index.html"));
+});
+
+// 🟡 MongoDB connect + return app
 const initApp = () => {
   return new Promise<Express>(async (resolve, reject) => {
     if (!process.env.DB_CONNECTION) {
