@@ -12,6 +12,7 @@ const dotenv_1 = __importDefault(require("dotenv"));
 const GeminiApi_1 = require("../api/GeminiApi");
 const tournament_model_1 = __importDefault(require("../models/tournament_model"));
 dotenv_1.default.config();
+const frontendUrl = process.env.BASE_URL;
 const LICHESS_AUTHORIZE_URL = "https://lichess.org/oauth";
 const LICHESS_TOKEN_URL = "https://lichess.org/api/token";
 const LICHESS_ACCOUNT_URL = "https://lichess.org/api/account";
@@ -83,7 +84,7 @@ const lichessCallback = async (req, res) => {
         const token = jsonwebtoken_1.default.sign({ _id: user._id }, tokenSecret, {
             expiresIn: parseDuration(tokenExpire),
         });
-        res.redirect(`http://localhost:5173/login?token=${token}&userId=${user._id}&lichessId=${user.lichessId}`);
+        res.redirect(`${frontendUrl}/login?token=${token}&userId=${user._id}&lichessId=${user.lichessId}`);
     }
     catch (err) {
         console.error(err);
@@ -205,7 +206,7 @@ const createTournament = async (req, res) => {
         res.status(201).json({
             message: "Tournament created",
             tournament,
-            lobbyUrl: `http://localhost:5173/lobby/${tournament._id}`,
+            lobbyUrl: `${frontendUrl}/lobby/${tournament._id}`,
         });
     }
     catch (error) {

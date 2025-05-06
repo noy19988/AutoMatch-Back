@@ -1,5 +1,6 @@
 import express, { Express } from "express";
 import dotenv from "dotenv";
+import path from "path";
 dotenv.config();
 
 import mongoose from "mongoose";
@@ -14,6 +15,15 @@ import cors from "cors";
 
 const app = express();
 
+// ✅ הגשת קבצי פרונט מהתיקייה ../front (חייב לבוא לפני הראוטים האחרים)
+const frontendPath = path.join(__dirname, "..", "front");
+app.use(express.static(frontendPath));
+
+// ✅ כל ראוט שלא נמצא - מחזיר את index.html
+app.get("*", (req, res) => {
+  res.sendFile(path.join(frontendPath, "index.html"));
+});
+
 //Session Middleware
 app.use(
   session({
@@ -23,6 +33,8 @@ app.use(
     cookie: { secure: false },
   })
 );
+
+// CORS
 app.use(
   cors({
     origin: "http://localhost:5173",
@@ -30,17 +42,11 @@ app.use(
   })
 );
 
-app.use(cors({ origin: "http://localhost:5173", credentials: true }));
 app.use(express.json());
-
-const db = mongoose.connection;
-db.on("error", console.error);
-db.once("open", () => console.log("Connected to Database"));
-
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// CORS
+// הגדרות CORS נוספות
 app.use((req, res, next) => {
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Methods", "*");
@@ -48,6 +54,7 @@ app.use((req, res, next) => {
   next();
 });
 
+// ראוטים
 app.use("/auth", authController);
 app.use("/auth/lichess", lichessRouter);
 app.use("/api/lichess", lichessRouter);
@@ -57,6 +64,7 @@ app.get("/about", (_, res) => {
   res.send("Hello World!");
 });
 
+// Swagger
 const options = {
   swaggerDefinition: {
     openapi: "3.0.0",
@@ -95,6 +103,7 @@ const options = {
 const specs = swaggerJsDoc(options);
 app.use("/api-docs", swaggerUI.serve, swaggerUI.setup(specs));
 
+// MongoDB connect + return app
 const initApp = () => {
   return new Promise<Express>(async (resolve, reject) => {
     if (!process.env.DB_CONNECTION) {

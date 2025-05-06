@@ -31,6 +31,7 @@ interface LichessGameExport {
 }
 
 dotenv.config();
+const frontendUrl = process.env.BASE_URL!;
 
 const LICHESS_AUTHORIZE_URL = "https://lichess.org/oauth";
 const LICHESS_TOKEN_URL = "https://lichess.org/api/token";
@@ -132,8 +133,9 @@ const lichessCallback = async (req: Request, res: Response): Promise<void> => {
     } as SignOptions);
 
     res.redirect(
-      `http://localhost:5173/login?token=${token}&userId=${user._id}&lichessId=${user.lichessId}`
+      `${frontendUrl}/login?token=${token}&userId=${user._id}&lichessId=${user.lichessId}`
     );
+    
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Lichess login failed" });
@@ -275,7 +277,7 @@ const createTournament = async (req: Request, res: Response) => {
     res.status(201).json({
       message: "Tournament created",
       tournament,
-      lobbyUrl: `http://localhost:5173/lobby/${tournament._id}`,
+      lobbyUrl: `${frontendUrl}/lobby/${tournament._id}`,
     });
   } catch (error) {
     console.error("❌ Error creating tournament:", error);
