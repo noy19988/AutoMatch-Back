@@ -15,6 +15,7 @@ const swagger_jsdoc_1 = __importDefault(require("swagger-jsdoc"));
 const swagger_ui_express_1 = __importDefault(require("swagger-ui-express"));
 const lichess_route_1 = __importDefault(require("./routes/lichess_route"));
 const cors_1 = __importDefault(require("cors"));
+const lichess_api_route_1 = __importDefault(require("./routes/lichess_api_route"));
 const app = (0, express_1.default)();
 // 🟡 הגדרת CORS
 app.use((0, cors_1.default)({
@@ -46,6 +47,7 @@ app.use((req, res, next) => {
 // ✅ ראוטים API
 app.use("/auth", auth_route_1.default);
 app.use("/auth/lichess", lichess_route_1.default);
+app.use("/api/lichess", lichess_api_route_1.default);
 // app.use("/api/lichess", lichessRouter);
 // app.use(lichessRouter); // אפשר להוריד אם מיותר
 // ✅ Swagger Docs

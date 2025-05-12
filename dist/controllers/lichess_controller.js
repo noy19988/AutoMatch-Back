@@ -319,9 +319,8 @@ const startTournament = async (req, res) => {
     const gameUrls = matches.map((m) => m.lichessUrl);
     console.log("🎯 Chess games created:", gameUrls);
     // ✅ Save all matches in round 1
-    await tournament_model_1.default.findByIdAndUpdate(tournament._id, {
-        $push: { rounds: { matches } },
-    });
+    await tournament_model_1.default.findByIdAndUpdate(tournamentId, { $addToSet: { playerIds: lichessId } }, // avoids duplicates
+    { new: true });
     res.json({ message: "Tournament started", matches });
 };
 // /controllers/lichess_controller.ts
