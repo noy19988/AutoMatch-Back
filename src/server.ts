@@ -22,15 +22,19 @@ app.use(
   })
 );
 
+
 // 🟡 Session Middleware
 app.use(
   session({
     secret: "some_secret_key",
     resave: false,
     saveUninitialized: true,
-    cookie: { secure: false },
-  })
-);
+    cookie: {
+      secure: process.env.NODE_ENV === 'production',  // <-- IMPORTANT
+      httpOnly: true,
+      sameSite: 'lax',
+    }
+  }));
 
 // 🟡 JSON + bodyParser
 app.use(express.json());
@@ -45,11 +49,13 @@ app.use((req, res, next) => {
   next();
 });
 
+
+
 // ✅ ראוטים API
 app.use("/auth", authController);
 app.use("/auth/lichess", lichessRouter);
-app.use("/api/lichess", lichessRouter);
-app.use(lichessRouter); // אפשר להוריד אם מיותר
+// app.use("/api/lichess", lichessRouter);
+// app.use(lichessRouter); // אפשר להוריד אם מיותר
 
 // ✅ Swagger Docs
 const options = {

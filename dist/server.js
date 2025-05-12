@@ -26,7 +26,11 @@ app.use((0, express_session_1.default)({
     secret: "some_secret_key",
     resave: false,
     saveUninitialized: true,
-    cookie: { secure: false },
+    cookie: {
+        secure: process.env.NODE_ENV === 'production', // <-- IMPORTANT
+        httpOnly: true,
+        sameSite: 'lax',
+    }
 }));
 // 🟡 JSON + bodyParser
 app.use(express_1.default.json());
@@ -42,8 +46,8 @@ app.use((req, res, next) => {
 // ✅ ראוטים API
 app.use("/auth", auth_route_1.default);
 app.use("/auth/lichess", lichess_route_1.default);
-app.use("/api/lichess", lichess_route_1.default);
-app.use(lichess_route_1.default); // אפשר להוריד אם מיותר
+// app.use("/api/lichess", lichessRouter);
+// app.use(lichessRouter); // אפשר להוריד אם מיותר
 // ✅ Swagger Docs
 const options = {
     swaggerDefinition: {

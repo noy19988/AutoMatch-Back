@@ -26,8 +26,8 @@ const tmpFunc = async () => {
     else {
         // הגדרת HTTPS
         const httpsOptions = {
-            key: fs_1.default.readFileSync(path_1.default.join(__dirname, "..", "client-key.pem")),
-            cert: fs_1.default.readFileSync(path_1.default.join(__dirname, "..", "client-cert.pem")),
+            key: fs_1.default.readFileSync(path_1.default.join(__dirname, "..", "myserver.key")),
+            cert: fs_1.default.readFileSync(path_1.default.join(__dirname, "..", "CSB.crt")),
         };
         // שרת HTTP על פורט 80
         http_1.default.createServer(app).listen(80, () => {

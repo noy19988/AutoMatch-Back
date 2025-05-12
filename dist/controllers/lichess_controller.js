@@ -45,18 +45,25 @@ const loginWithLichess = (req, res) => {
     const codeVerifier = generateCodeVerifier();
     const codeChallenge = generateCodeChallenge(codeVerifier);
     req.session.codeVerifier = codeVerifier;
+    console.log("code_verifier (login):", codeVerifier);
     const authUrl = `${LICHESS_AUTHORIZE_URL}?response_type=code&client_id=${clientId}&redirect_uri=${redirectUri}&scope=challenge:write%20board:play%20bot:play&code_challenge=${codeChallenge}&code_challenge_method=S256`;
     res.redirect(authUrl);
 };
 // callback מה-lichess
 const lichessCallback = async (req, res) => {
+    console.log("✅ Lichess callback reached");
+    console.log("Request query:", req.query);
+    console.log("Session ID:", req.sessionID);
+    console.log("Session contents:", req.session);
     const code = req.query.code;
     const codeVerifier = req.session.codeVerifier;
+    console.log("code_verifier (callback):", req.session.codeVerifier);
     if (!codeVerifier) {
         res.status(400).json({ error: "Missing code_verifier from session" });
         return;
     }
     try {
+        console.log("hello");
         const tokenRes = await axios_1.default.post(LICHESS_TOKEN_URL, new URLSearchParams({
             grant_type: "authorization_code",
             code,
@@ -64,7 +71,10 @@ const lichessCallback = async (req, res) => {
             client_id: clientId,
             code_verifier: codeVerifier,
         }), { headers: { "Content-Type": "application/x-www-form-urlencoded" } });
+        console.log("token--", tokenRes);
+        console.log("code", code);
         const accessToken = tokenRes.data.access_token;
+        console.log("accessToken", accessToken);
         const userInfoRes = await axios_1.default.get(LICHESS_ACCOUNT_URL, {
             headers: { Authorization: `Bearer ${accessToken}` },
         });
@@ -84,6 +94,7 @@ const lichessCallback = async (req, res) => {
         const token = jsonwebtoken_1.default.sign({ _id: user._id }, tokenSecret, {
             expiresIn: parseDuration(tokenExpire),
         });
+        console.log("redirect", `${frontendUrl}/login?token=${token}&userId=${user._id}&lichessId=${user.lichessId}`);
         res.redirect(`${frontendUrl}/login?token=${token}&userId=${user._id}&lichessId=${user.lichessId}`);
     }
     catch (err) {

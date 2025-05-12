@@ -24,9 +24,10 @@ const tmpFunc = async () => {
   } else {
     // הגדרת HTTPS
     const httpsOptions = {
-      key: fs.readFileSync(path.join(__dirname, "..", "client-key.pem")),
-      cert: fs.readFileSync(path.join(__dirname, "..", "client-cert.pem")),
+      key: fs.readFileSync(path.join(__dirname, "..", "myserver.key")),
+      cert: fs.readFileSync(path.join(__dirname, "..", "CSB.crt")),
     };
+    
 
     // שרת HTTP על פורט 80
     http.createServer(app).listen(80, () => {
@@ -39,7 +40,11 @@ const tmpFunc = async () => {
       console.log("🔒 HTTPS server running on port 443");
     });
 
+
+
   }
+
+  
 };
 
 tmpFunc();
