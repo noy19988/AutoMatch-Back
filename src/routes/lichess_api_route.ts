@@ -1,6 +1,7 @@
 import express from "express";
 import lichessController from "../controllers/lichess_controller";
 import TournamentModel from "../models/tournament_model";
+import { advanceTournamentRound } from "../controllers/tournament_logic";
 
 const router = express.Router();
 
@@ -73,17 +74,36 @@ router.post(
       res.status(500).json({ error: "Internal server error" });
     }
   }) as express.RequestHandler);
+  router.get(
+    "/lichess/game/:gameId",
+    lichessController.getGameResult as unknown as express.RequestHandler
+  );
+  
+ // תיקון בקובץ lichess_api_route.ts בשורה 85
+router.post(
+  "/tournaments/updateMatchResultByLichessUrl",
+  // כאן התיקון - המרה של הפונקציה ל-RequestHandler כנדרש
+  (lichessController.updateMatchResultByLichessUrl as unknown as express.RequestHandler)
+);
+
+  router.post("/tournaments/:id/advance", async (req, res) => {
+    try {
+      await advanceTournamentRound(req.params.id);
+      res.status(200).json({ message: "Tournament advanced (if possible)" });
+    } catch (err) {
+      console.error("❌ Error advancing tournament:", err);
+      res.status(500).json({ error: "Failed to advance tournament" });
+    }
+  });
+
+  
   router.post(
     "/tournaments/:id/start",
-    lichessController.startTournament as express.RequestHandler
+    lichessController.startTournament as unknown as express.RequestHandler
   );
+
   
-  // /routes/lichess_routes.ts
-  router.post(
-    "/tournaments/updateMatchResultByLichessUrl",
-    lichessController.updateMatchResultByLichessUrl as express.RequestHandler
-  );
-  
+
   router.get("/lichess/game/:gameId", async (req, res) => {
     try {
       await lichessController.getGameResult(req, res); // Now calls the controller directly

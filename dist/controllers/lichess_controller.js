@@ -11,6 +11,7 @@ const crypto_1 = __importDefault(require("crypto"));
 const dotenv_1 = __importDefault(require("dotenv"));
 const GeminiApi_1 = require("../api/GeminiApi");
 const tournament_model_1 = __importDefault(require("../models/tournament_model"));
+const tournament_logic_1 = require("./tournament_logic"); // 💡 חשוב לייבא נכון
 dotenv_1.default.config();
 const frontendUrl = process.env.BASE_URL;
 const LICHESS_AUTHORIZE_URL = "https://lichess.org/oauth";
@@ -42,13 +43,55 @@ function generateCodeChallenge(verifier) {
 }
 // יצירת URL להפניית המשתמש להתחברות דרך Lichess
 const loginWithLichess = (req, res) => {
+    // יצירת code verifier ייחודי
     const codeVerifier = generateCodeVerifier();
     const codeChallenge = generateCodeChallenge(codeVerifier);
+    // שמירת code verifier בסשן
     req.session.codeVerifier = codeVerifier;
-    console.log("code_verifier (login):", codeVerifier);
-    const authUrl = `${LICHESS_AUTHORIZE_URL}?response_type=code&client_id=${clientId}&redirect_uri=${redirectUri}&scope=challenge:write%20board:play%20bot:play&code_challenge=${codeChallenge}&code_challenge_method=S256`;
-    res.redirect(authUrl);
+    // הדפסה מפורטת לצורכי ניפוי שגיאות
+    console.log("🔐 Generated code_verifier:", codeVerifier);
+    console.log("🔑 Generated code_challenge:", codeChallenge);
+    console.log("💾 Storing in session:", req.sessionID);
+    // ודא ששמירת הסשן הסתיימה לפני ההפניה
+    req.session.save((err) => {
+        if (err) {
+            console.error("❌ Error saving session:", err);
+            return res.status(500).json({
+                error: "Failed to save session",
+                details: err?.message
+            });
+        }
+        // הרכב את כתובת ה-URL להפניה
+        const authUrl = `${LICHESS_AUTHORIZE_URL}?response_type=code&client_id=${clientId}&redirect_uri=${redirectUri}&scope=challenge:write%20board:play%20bot:play&code_challenge=${codeChallenge}&code_challenge_method=S256`;
+        console.log("🔄 Redirecting to Lichess:", authUrl);
+        // הפנה את המשתמש ל-Lichess
+        res.redirect(authUrl);
+    });
 };
+// פונקציית עזר לניסיונות חוזרים
+async function fetchWithRetry(url, options, retries = 3) {
+    let lastError;
+    for (let attempt = 0; attempt < retries; attempt++) {
+        try {
+            console.log(`🔄 Fetch attempt ${attempt + 1}/${retries} to ${url}`);
+            // נסה לבצע את הבקשה
+            const fetchResult = await fetch(url, options);
+            return fetchResult;
+        }
+        catch (error) {
+            console.error(`❌ Attempt ${attempt + 1} failed:`, error);
+            lastError = error;
+            // המתנה בין ניסיונות (עם המתנה ארוכה יותר בכל ניסיון)
+            if (attempt < retries - 1) {
+                const delay = Math.pow(2, attempt) * 1000; // 1s, 2s, 4s...
+                console.log(`⏱️ Waiting ${delay}ms before retry...`);
+                await new Promise(resolve => setTimeout(resolve, delay));
+            }
+        }
+    }
+    // כל הניסיונות נכשלו
+    throw lastError;
+}
 // callback מה-lichess
 const lichessCallback = async (req, res) => {
     console.log("✅ Lichess callback reached");
@@ -59,47 +102,106 @@ const lichessCallback = async (req, res) => {
     const codeVerifier = req.session.codeVerifier;
     console.log("code_verifier (callback):", req.session.codeVerifier);
     if (!codeVerifier) {
+        console.error("❌ Missing code_verifier from session");
         res.status(400).json({ error: "Missing code_verifier from session" });
         return;
     }
+    if (!code) {
+        console.error("❌ Missing authorization code from query");
+        res.status(400).json({ error: "Missing authorization code" });
+        return;
+    }
     try {
-        console.log("hello");
-        const tokenRes = await axios_1.default.post(LICHESS_TOKEN_URL, new URLSearchParams({
-            grant_type: "authorization_code",
-            code,
-            redirect_uri: redirectUri,
-            client_id: clientId,
-            code_verifier: codeVerifier,
-        }), { headers: { "Content-Type": "application/x-www-form-urlencoded" } });
-        console.log("token--", tokenRes);
-        console.log("code", code);
-        const accessToken = tokenRes.data.access_token;
-        console.log("accessToken", accessToken);
-        const userInfoRes = await axios_1.default.get(LICHESS_ACCOUNT_URL, {
-            headers: { Authorization: `Bearer ${accessToken}` },
-        });
-        const lichessUser = userInfoRes.data;
-        const lichessId = lichessUser.id;
-        let user = await user_model_1.default.findOne({ lichessId });
-        if (!user) {
-            user = await user_model_1.default.create({
-                lichessId,
-                lichessAccessToken: accessToken,
+        console.log("🔄 Attempting to exchange code for token...");
+        // הגדרת בקשה עם זמן ארוך יותר וניסיונות חוזרים
+        const tokenRes = await fetchWithRetry(LICHESS_TOKEN_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+                grant_type: "authorization_code",
+                code,
+                redirect_uri: redirectUri,
+                client_id: clientId,
+                code_verifier: codeVerifier,
+            }).toString(),
+            // הגדלת זמן ההמתנה לתשובה
+            timeout: 15000
+        }, 3 // מספר ניסיונות חוזרים
+        );
+        if (!tokenRes.ok) {
+            console.error(`❌ Lichess token endpoint returned ${tokenRes.status}: ${tokenRes.statusText}`);
+            // במקרה של שגיאה, בדוק אם אפשר להחזיר תשובה יותר ספציפית
+            if (tokenRes.status === 400) {
+                const errorData = await tokenRes.text();
+                res.status(400).json({
+                    error: "Lichess API error",
+                    details: errorData
+                });
+                return;
+            }
+            // במקרה אחר, החזר שגיאה כללית
+            throw new Error(`Lichess token endpoint returned ${tokenRes.status}`);
+        }
+        const tokenData = await tokenRes.json();
+        const accessToken = tokenData.access_token;
+        if (!accessToken) {
+            console.error("❌ No access token in response");
+            throw new Error("No access token in response");
+        }
+        console.log("✅ Received access token from Lichess");
+        try {
+            console.log("🔄 Fetching Lichess user information...");
+            const userInfoRes = await fetch(LICHESS_ACCOUNT_URL, {
+                headers: { Authorization: `Bearer ${accessToken}` },
             });
+            if (!userInfoRes.ok) {
+                console.error(`❌ Lichess API account endpoint returned ${userInfoRes.status}`);
+                throw new Error(`Lichess API account endpoint returned ${userInfoRes.status}`);
+            }
+            const lichessUser = await userInfoRes.json();
+            const lichessId = lichessUser.id;
+            console.log(`✅ Fetched user info: ${lichessId}`);
+            // מציאת המשתמש במסד הנתונים או יצירת אחד חדש
+            let user = await user_model_1.default.findOne({ lichessId });
+            if (!user) {
+                console.log(`🆕 Creating new user with lichessId: ${lichessId}`);
+                user = await user_model_1.default.create({
+                    lichessId,
+                    lichessAccessToken: accessToken,
+                });
+            }
+            else {
+                console.log(`✏️ Updating existing user: ${lichessId}`);
+                user.lichessAccessToken = accessToken;
+                await user.save();
+            }
+            // יצירת טוקן JWT
+            const token = jsonwebtoken_1.default.sign({ _id: user._id }, tokenSecret, {
+                expiresIn: parseDuration(tokenExpire),
+            });
+            console.log(`✅ Successfully processed login for user: ${lichessId}`);
+            console.log(`🔄 Redirecting to: ${frontendUrl}/login?token=${token}&userId=${user._id}&lichessId=${user.lichessId}`);
+            res.redirect(`${frontendUrl}/login?token=${token}&userId=${user._id}&lichessId=${user.lichessId}`);
+            return;
         }
-        else {
-            user.lichessAccessToken = accessToken;
-            await user.save(); // <-- This saves the token
+        catch (userError) {
+            console.error("❌ Error during user info fetch:", userError);
+            res.status(500).json({
+                error: "Failed to fetch user info from Lichess",
+                details: userError instanceof Error ? userError.message : "Unknown error"
+            });
+            return;
         }
-        const token = jsonwebtoken_1.default.sign({ _id: user._id }, tokenSecret, {
-            expiresIn: parseDuration(tokenExpire),
-        });
-        console.log("redirect", `${frontendUrl}/login?token=${token}&userId=${user._id}&lichessId=${user.lichessId}`);
-        res.redirect(`${frontendUrl}/login?token=${token}&userId=${user._id}&lichessId=${user.lichessId}`);
     }
     catch (err) {
-        console.error(err);
-        res.status(500).json({ error: "Lichess login failed" });
+        console.error("❌ Error during Lichess OAuth flow:", err);
+        // שגיאה ידידותית למשתמש
+        res.status(500).json({
+            error: "Lichess login failed",
+            message: "Failed to connect with Lichess. Please try again later.",
+            details: err instanceof Error ? err.message : "Unknown error"
+        });
+        return;
     }
 };
 const autoMatchWithAI = async (req, res) => {
@@ -203,16 +305,17 @@ const createTournament = async (req, res) => {
             await tournament_model_1.default.deleteOne({ _id: existingTournament._id });
             console.log("🧹 Deleted the completed tournament:", existingTournament);
         }
-        // Proceed with tournament creation
         const tournament = await tournament_model_1.default.create({
-            tournamentName, // Save the tournament name
+            tournamentName,
             createdBy,
             playerIds,
             rated: true,
             maxPlayers: parseInt(maxPlayers, 10),
-            rounds: [],
+            bracket: [], // במקום rounds
+            currentStage: 0, // התחלה מ-Round 1
+            advancingPlayers: [],
             winner: null,
-            status: "active", // Mark the new tournament as active
+            status: "active",
         });
         res.status(201).json({
             message: "Tournament created",
@@ -258,72 +361,140 @@ const getTournamentById = async (req, res) => {
         res.status(500).json({ error: "Server error" });
     }
 };
+// פונקציה זו בודקת אם הטוקן תקף
+async function validateLichessToken(token) {
+    try {
+        const response = await fetch(LICHESS_ACCOUNT_URL, {
+            headers: {
+                Authorization: `Bearer ${token}`
+            },
+        });
+        return response.ok;
+    }
+    catch (error) {
+        console.error("❌ Token validation failed:", error);
+        return false;
+    }
+}
+// תקן את השגיאות של טיפוס בפונקציית startTournament
 const startTournament = async (req, res) => {
-    const { id } = req.params;
-    const tournament = await tournament_model_1.default.findById(id);
-    if (!tournament)
-        return res.status(404).json({ error: "Not found" });
-    // ✅ Prevent duplicate starts
-    if (tournament.rounds.length > 0) {
-        return res.status(400).json({ error: "Tournament already started." });
-    }
-    // ✅ Prevent starting unless lobby is full
-    if (tournament.playerIds.length !== tournament.maxPlayers) {
-        return res.status(400).json({ error: "Lobby not full" });
-    }
-    // ✅ Validate creator
-    const creator = await user_model_1.default.findById(tournament.createdBy);
-    if (!creator || !creator.lichessAccessToken) {
-        return res
-            .status(403)
-            .json({ error: "Creator not authorized with Lichess" });
-    }
-    const validPlayers = tournament.playerIds.filter(Boolean);
-    // 🔀 Shuffle players
-    const shuffled = validPlayers.sort(() => 0.5 - Math.random());
-    const matches = [];
-    // 🧠 If odd number, remove 1 player and log (optional)
-    if (shuffled.length % 2 !== 0) {
-        const byePlayer = shuffled.pop();
-        console.log(`🚨 Player ${byePlayer} gets a bye this round`);
-        // You can store byePlayer somewhere if needed
-    }
-    // ♟️ Pair players and create matches
-    for (let i = 0; i < shuffled.length; i += 2) {
-        const p1 = shuffled[i];
-        const p2 = shuffled[i + 1];
-        try {
-            const response = await axios_1.default.post("https://lichess.org/api/challenge/open", {
-                rated: true, // Set the game to rated
-                clock: { limit: 300, increment: 0 },
-                variant: "standard",
-            }, {
-                headers: {
-                    Authorization: `Bearer ${creator.lichessAccessToken}`,
-                },
-            });
-            const challenge = response.data;
-            matches.push({
-                player1: p1,
-                player2: p2,
-                lichessUrl: `https://lichess.org/${challenge.id}`,
-                whiteUrl: challenge.whiteUrl,
-                blackUrl: challenge.blackUrl,
-                result: "pending",
+    try {
+        const { id } = req.params;
+        console.log(`🔄 התחלת טורניר ${id}`);
+        const tournament = await tournament_model_1.default.findById(id);
+        if (!tournament) {
+            return res.status(404).json({ error: "Tournament not found" });
+        }
+        if (tournament.bracket.length > 0) {
+            return res.status(400).json({
+                error: "Tournament already started",
+                bracket: tournament.bracket,
             });
         }
-        catch (err) {
-            console.error(`❌ Failed to create game for ${p1} vs ${p2}:`, err);
+        if (tournament.playerIds.length !== tournament.maxPlayers) {
+            return res.status(400).json({
+                error: "Lobby not full",
+                current: tournament.playerIds.length,
+                required: tournament.maxPlayers,
+            });
         }
+        const creator = await user_model_1.default.findById(tournament.createdBy);
+        if (!creator || !creator.lichessAccessToken) {
+            return res.status(403).json({ error: "Creator not authorized with Lichess" });
+        }
+        const validPlayers = tournament.playerIds.filter(Boolean);
+        const shuffled = validPlayers.sort(() => 0.5 - Math.random());
+        const matches = [];
+        let byePlayer = null;
+        if (shuffled.length % 2 !== 0) {
+            byePlayer = shuffled.pop();
+            if (byePlayer) {
+                tournament.advancingPlayers.push(byePlayer);
+            }
+        }
+        for (let i = 0; i < shuffled.length; i += 2) {
+            const p1Id = shuffled[i];
+            const p2Id = shuffled[i + 1];
+            try {
+                // במקום לחפש משתמש, ננסה ליצור משחק פתוח ישירות
+                const challengeRes = await axios_1.default.post("https://lichess.org/api/challenge/open", {
+                    rated: tournament.rated,
+                    clock: { limit: 300, increment: 0 },
+                    variant: "standard",
+                }, {
+                    headers: {
+                        Authorization: `Bearer ${creator.lichessAccessToken}`,
+                        Accept: "application/json",
+                    },
+                    timeout: 10000
+                });
+                // עדכון ממשק LichessChallengeResponse קודם לכן
+                // טיפול בטוח ב-ID של המשחק
+                // השתמש ב-type assertion כדי לעקוף את בדיקת הטיפוס
+                const responseData = challengeRes.data;
+                const gameId = responseData.id || responseData.challenge?.id;
+                if (!gameId) {
+                    console.error("Missing game ID in response:", responseData);
+                    throw new Error("Missing game ID in challenge response");
+                }
+                const gameUrl = `https://lichess.org/${gameId}`;
+                const whiteUrl = responseData.urlWhite || `${gameUrl}?color=white`;
+                const blackUrl = responseData.urlBlack || `${gameUrl}?color=black`;
+                matches.push({
+                    player1: p1Id,
+                    player2: p2Id,
+                    lichessUrl: gameUrl,
+                    whiteUrl: whiteUrl,
+                    blackUrl: blackUrl,
+                    result: "pending",
+                    winner: null,
+                });
+                console.log(`📝 Match created: ${p1Id} vs ${p2Id} (game: ${gameUrl})`);
+                // המתן מעט בין בקשות כדי להימנע מ-rate limiting
+                await new Promise(resolve => setTimeout(resolve, 1500));
+            }
+            catch (err) {
+                console.error(`❌ Error creating match for ${p1Id} vs ${p2Id}:`, err);
+                // יצירת רשומת משחק עם סימון שגיאה
+                matches.push({
+                    player1: p1Id,
+                    player2: p2Id,
+                    lichessUrl: `https://lichess.org/error-placeholder-${Date.now()}`,
+                    whiteUrl: "#",
+                    blackUrl: "#",
+                    result: "error",
+                    winner: null,
+                });
+            }
+        }
+        const updatedTournament = await tournament_model_1.default.findByIdAndUpdate(tournament._id, {
+            $set: {
+                bracket: [
+                    {
+                        name: "Round 1",
+                        matches,
+                        startTime: new Date(),
+                    },
+                ],
+                currentStage: 0,
+                advancingPlayers: byePlayer ? [byePlayer] : [],
+            },
+        }, { new: true });
+        return res.status(200).json({
+            message: "Tournament started successfully",
+            matches,
+            byePlayer,
+            tournament: updatedTournament,
+        });
     }
-    const gameUrls = matches.map((m) => m.lichessUrl);
-    console.log("🎯 Chess games created:", gameUrls);
-    // ✅ Save all matches in round 1
-    await tournament_model_1.default.findByIdAndUpdate(tournamentId, { $addToSet: { playerIds: lichessId } }, // avoids duplicates
-    { new: true });
-    res.json({ message: "Tournament started", matches });
+    catch (err) {
+        console.error("❌ Error starting tournament:", err);
+        return res.status(500).json({
+            error: "Internal server error",
+            details: err instanceof Error ? err.message : "Unknown error",
+        });
+    }
 };
-// /controllers/lichess_controller.ts
 const updateMatchResultByLichessUrl = async (req, res) => {
     try {
         console.log("🔍 Request received to update match:", req.body);
@@ -332,29 +503,35 @@ const updateMatchResultByLichessUrl = async (req, res) => {
             console.log("❌ Missing lichessUrl in request body");
             return res.status(400).json({ error: "Missing lichessUrl" });
         }
-        console.log(`📝 Attempting to update match with lichessUrl: ${lichessUrl}, winner: ${winner}, status: ${status}`);
-        // Find the tournament containing the match
+        // הפקת ה-gameId מה-URL
+        const gameId = lichessUrl.split('/').pop()?.split('?')[0];
+        if (!gameId) {
+            return res.status(400).json({ error: "Invalid lichessUrl format" });
+        }
+        // חיפוש הטורניר לפי URL מלא או לפי ID המשחק
         const tournament = await tournament_model_1.default.findOne({
-            "rounds.matches.lichessUrl": lichessUrl,
+            $or: [
+                { "bracket.matches.lichessUrl": lichessUrl },
+                { "bracket.matches.lichessUrl": { $regex: gameId } }
+            ]
         });
         if (!tournament) {
-            console.log(`❌ No tournament found with match URL: ${lichessUrl}`);
-            return res
-                .status(404)
-                .json({ error: "Tournament not found for this match" });
+            console.log(`❌ No tournament found with game ID: ${gameId}`);
+            return res.status(404).json({ error: "Tournament not found for this match" });
         }
         console.log(`✅ Found tournament: ${tournament._id}`);
-        // Find and update the specific match
         let updated = false;
         let winningPlayerId = null;
-        // Loop through tournament rounds to find the match
-        for (let roundIndex = 0; roundIndex < tournament.rounds.length; roundIndex++) {
-            const round = tournament.rounds[roundIndex];
-            for (let matchIndex = 0; matchIndex < round.matches.length; matchIndex++) {
-                const match = round.matches[matchIndex];
-                if (match.lichessUrl === lichessUrl) {
-                    console.log(`✅ Found matching game at round ${roundIndex}, match ${matchIndex}`);
-                    // Determine the winning player ID based on winner color
+        // עדכון התוצאה במשחק המתאים
+        for (let bracketIndex = 0; bracketIndex < tournament.bracket.length; bracketIndex++) {
+            const bracket = tournament.bracket[bracketIndex];
+            for (let matchIndex = 0; matchIndex < bracket.matches.length; matchIndex++) {
+                const match = bracket.matches[matchIndex];
+                // בדיקה אם המשחק מתאים לפי URL מלא או gameId
+                const currentGameId = match.lichessUrl.split('/').pop()?.split('?')[0];
+                if (match.lichessUrl === lichessUrl || currentGameId === gameId) {
+                    console.log(`✅ Found matching game in bracket ${bracketIndex}, match ${matchIndex}`);
+                    // קביעת המנצח
                     if (winner === "white") {
                         winningPlayerId = match.player1;
                     }
@@ -364,14 +541,31 @@ const updateMatchResultByLichessUrl = async (req, res) => {
                     else {
                         winningPlayerId = "draw";
                     }
-                    // Update using MongoDB's positional operator for nested arrays
-                    const updatePath = `rounds.${roundIndex}.matches.${matchIndex}`;
+                    // עדכון המשחק
+                    const updatePath = `bracket.${bracketIndex}.matches.${matchIndex}`;
                     const updateObj = {};
-                    updateObj[`${updatePath}.result`] = status || "completed"; // Use the status as result
-                    updateObj[`${updatePath}.winner`] = winningPlayerId; // Store player ID as winner
+                    updateObj[`${updatePath}.result`] = status || "completed";
+                    updateObj[`${updatePath}.winner`] = winningPlayerId;
                     await tournament_model_1.default.updateOne({ _id: tournament._id }, { $set: updateObj });
                     console.log(`✅ Updated match result to status: ${status}, winner: ${winningPlayerId}`);
                     updated = true;
+                    // אם המשחק בסיבוב הנוכחי, הוספת המנצח לרשימת המתקדמים
+                    if (bracketIndex === tournament.currentStage &&
+                        winningPlayerId !== "draw" &&
+                        winningPlayerId !== null &&
+                        !tournament.advancingPlayers.includes(winningPlayerId)) {
+                        tournament.advancingPlayers.push(winningPlayerId);
+                        await tournament.save();
+                        console.log(`🏁 ${winningPlayerId} advanced to next round`);
+                        // ניסיון לקדם את הטורניר באופן אוטומטי
+                        try {
+                            await (0, tournament_logic_1.advanceTournamentRound)(tournament._id.toString());
+                        }
+                        catch (advanceError) {
+                            console.error("❌ Error advancing tournament:", advanceError);
+                            // איננו מחזירים שגיאה למשתמש כי עדכון המשחק הצליח
+                        }
+                    }
                     break;
                 }
             }
@@ -385,7 +579,7 @@ const updateMatchResultByLichessUrl = async (req, res) => {
         return res.status(200).json({
             message: "Match result updated successfully",
             winner: winningPlayerId,
-            status,
+            status: status,
         });
     }
     catch (err) {

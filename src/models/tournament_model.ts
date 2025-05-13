@@ -5,25 +5,31 @@ interface Match {
   player1: string;
   player2: string;
   lichessUrl: string;
-  result?: String;
   whiteUrl: string;
   blackUrl: string;
-  winner?: string | null; // Added winner field to store the winner
+  result?: string;
+  winner?: string | null;
 }
 
-// Round Schema
-interface Round {
+// Bracket Stage Schema
+interface BracketStage {
+  name: string;
   matches: Match[];
+  startTime?: Date;
+  endTime?: Date;
 }
 
 export interface TournamentDocument extends Document {
+  tournamentName: string;
   createdBy: mongoose.Types.ObjectId;
   playerIds: string[];
-  rated: boolean;
-  rounds: Round[];
-  winner: string | null;
   maxPlayers: number;
-  status: "active" | "completed"; // Status field added
+  rated: boolean;
+  bracket: BracketStage[];
+  currentStage: number;
+  advancingPlayers: string[]; // tracking of players who advanced from currentStage
+  winner: string | null;
+  status: "active" | "completed";
 }
 
 const matchSchema = new Schema<Match>(
@@ -33,38 +39,44 @@ const matchSchema = new Schema<Match>(
     lichessUrl: { type: String, required: true },
     whiteUrl: { type: String, required: true },
     blackUrl: { type: String, required: true },
-    result: {
-      type: String,
-    },
+    result: { type: String },
     winner: { type: String, default: null },
   },
   { _id: false }
 );
 
-const roundSchema = new Schema<Round>(
+const bracketStageSchema = new Schema<BracketStage>(
   {
+    name: { type: String, required: true },
     matches: [matchSchema],
+    startTime: { type: Date },
+    endTime: { type: Date },
   },
   { _id: false }
 );
 
-// Tournament Schema
-const tournamentSchema = new Schema(
+const tournamentSchema = new Schema<TournamentDocument>(
   {
     tournamentName: { type: String, required: true },
-    createdBy: { type: String, required: true },
-    playerIds: [String],
-    maxPlayers: Number,
+    createdBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true,
+    },
+    playerIds: { type: [String], required: true },
+    maxPlayers: { type: Number, required: true },
     rated: { type: Boolean, default: true },
-    rounds: [roundSchema], // Corrected to an array of rounds
-    winner: { type: String, default: null }, // Tournament winner
-    status: { type: String, enum: ["active", "completed"], default: "active" }, // Add a status field to indicate whether the tournament is active or completed
+    bracket: [bracketStageSchema],
+    currentStage: { type: Number, default: 0 }, // שלב נוכחי
+    advancingPlayers: { type: [String], default: [] }, // שחקנים שעברו שלב
+    winner: { type: String, default: null },
+    status: {
+      type: String,
+      enum: ["active", "completed"],
+      default: "active",
+    },
   },
   { timestamps: true }
 );
 
-// This model will allow us to perform CRUD operations for Tournament
-export default mongoose.model<TournamentDocument>(
-  "Tournament",
-  tournamentSchema
-);
+export default mongoose.model<TournamentDocument>("Tournament", tournamentSchema);

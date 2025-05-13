@@ -1,10 +1,11 @@
 {
   "name": "automatch-back",
   "version": "1.0.0",
+  "type": "commonjs",
   "description": "",
   "main": "index.js",
   "scripts": {
-    "prod": "cp .env_prod .env && tsc -p tsconfig_prod.json && pm2 restart ecosystem.config.js --env production",
+    "prod": "cp .env_prod .env && tsc -p tsconfig_prod.json && pm2 restart ecosystem.config.cjs --env production",
     "dev": "cp .env_dev .env && nodemon ./src/app.ts",
     "start": "cp .env_dev .env && tsc && node ./dist/src/app.js",
     "test": "cp .env_test .env && jest --detectOpenHandles --forceExit --runInBand",
@@ -46,6 +47,7 @@
     "google-auth-library": "^9.15.1",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.13.0",
+    "node-fetch": "^2.7.0",
     "socket.io": "^4.8.1",
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.1",
@@ -55,6 +57,7 @@
   },
   "devDependencies": {
     "@types/jest": "^29.5.14",
+    "@types/node-fetch": "^2.6.12",
     "globals": "^16.0.0",
     "nodemon": "^3.1.9",
     "ts-jest": "^29.3.0"
