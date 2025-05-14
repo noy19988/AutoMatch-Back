@@ -12,6 +12,16 @@ const dotenv_1 = __importDefault(require("dotenv"));
 const GeminiApi_1 = require("../api/GeminiApi");
 const tournament_model_1 = __importDefault(require("../models/tournament_model"));
 const tournament_logic_1 = require("./tournament_logic"); // 💡 חשוב לייבא נכון
+const getBracketName = (playerCount) => {
+    switch (playerCount) {
+        case 2: return "Final";
+        case 4: return "Semifinals";
+        case 8: return "Quarterfinals";
+        case 16: return "Round of 16";
+        case 32: return "Round of 32";
+        default: return `Round of ${playerCount}`;
+    }
+};
 dotenv_1.default.config();
 const frontendUrl = process.env.BASE_URL;
 const LICHESS_AUTHORIZE_URL = "https://lichess.org/oauth";
@@ -416,7 +426,6 @@ const startTournament = async (req, res) => {
             const p1Id = shuffled[i];
             const p2Id = shuffled[i + 1];
             try {
-                // במקום לחפש משתמש, ננסה ליצור משחק פתוח ישירות
                 const challengeRes = await axios_1.default.post("https://lichess.org/api/challenge/open", {
                     rated: tournament.rated,
                     clock: { limit: 300, increment: 0 },
@@ -428,9 +437,6 @@ const startTournament = async (req, res) => {
                     },
                     timeout: 10000
                 });
-                // עדכון ממשק LichessChallengeResponse קודם לכן
-                // טיפול בטוח ב-ID של המשחק
-                // השתמש ב-type assertion כדי לעקוף את בדיקת הטיפוס
                 const responseData = challengeRes.data;
                 const gameId = responseData.id || responseData.challenge?.id;
                 if (!gameId) {
@@ -450,12 +456,10 @@ const startTournament = async (req, res) => {
                     winner: null,
                 });
                 console.log(`📝 Match created: ${p1Id} vs ${p2Id} (game: ${gameUrl})`);
-                // המתן מעט בין בקשות כדי להימנע מ-rate limiting
                 await new Promise(resolve => setTimeout(resolve, 1500));
             }
             catch (err) {
                 console.error(`❌ Error creating match for ${p1Id} vs ${p2Id}:`, err);
-                // יצירת רשומת משחק עם סימון שגיאה
                 matches.push({
                     player1: p1Id,
                     player2: p2Id,
@@ -467,11 +471,12 @@ const startTournament = async (req, res) => {
                 });
             }
         }
+        const bracketName = getBracketName(shuffled.length + (byePlayer ? 1 : 0));
         const updatedTournament = await tournament_model_1.default.findByIdAndUpdate(tournament._id, {
             $set: {
                 bracket: [
                     {
-                        name: "Round 1",
+                        name: bracketName,
                         matches,
                         startTime: new Date(),
                     },
@@ -503,12 +508,10 @@ const updateMatchResultByLichessUrl = async (req, res) => {
             console.log("❌ Missing lichessUrl in request body");
             return res.status(400).json({ error: "Missing lichessUrl" });
         }
-        // הפקת ה-gameId מה-URL
         const gameId = lichessUrl.split('/').pop()?.split('?')[0];
         if (!gameId) {
             return res.status(400).json({ error: "Invalid lichessUrl format" });
         }
-        // חיפוש הטורניר לפי URL מלא או לפי ID המשחק
         const tournament = await tournament_model_1.default.findOne({
             $or: [
                 { "bracket.matches.lichessUrl": lichessUrl },
@@ -522,16 +525,13 @@ const updateMatchResultByLichessUrl = async (req, res) => {
         console.log(`✅ Found tournament: ${tournament._id}`);
         let updated = false;
         let winningPlayerId = null;
-        // עדכון התוצאה במשחק המתאים
         for (let bracketIndex = 0; bracketIndex < tournament.bracket.length; bracketIndex++) {
             const bracket = tournament.bracket[bracketIndex];
             for (let matchIndex = 0; matchIndex < bracket.matches.length; matchIndex++) {
                 const match = bracket.matches[matchIndex];
-                // בדיקה אם המשחק מתאים לפי URL מלא או gameId
                 const currentGameId = match.lichessUrl.split('/').pop()?.split('?')[0];
                 if (match.lichessUrl === lichessUrl || currentGameId === gameId) {
                     console.log(`✅ Found matching game in bracket ${bracketIndex}, match ${matchIndex}`);
-                    // קביעת המנצח
                     if (winner === "white") {
                         winningPlayerId = match.player1;
                     }
@@ -541,7 +541,6 @@ const updateMatchResultByLichessUrl = async (req, res) => {
                     else {
                         winningPlayerId = "draw";
                     }
-                    // עדכון המשחק
                     const updatePath = `bracket.${bracketIndex}.matches.${matchIndex}`;
                     const updateObj = {};
                     updateObj[`${updatePath}.result`] = status || "completed";
@@ -549,7 +548,7 @@ const updateMatchResultByLichessUrl = async (req, res) => {
                     await tournament_model_1.default.updateOne({ _id: tournament._id }, { $set: updateObj });
                     console.log(`✅ Updated match result to status: ${status}, winner: ${winningPlayerId}`);
                     updated = true;
-                    // אם המשחק בסיבוב הנוכחי, הוספת המנצח לרשימת המתקדמים
+                    // advancing
                     if (bracketIndex === tournament.currentStage &&
                         winningPlayerId !== "draw" &&
                         winningPlayerId !== null &&
@@ -557,13 +556,16 @@ const updateMatchResultByLichessUrl = async (req, res) => {
                         tournament.advancingPlayers.push(winningPlayerId);
                         await tournament.save();
                         console.log(`🏁 ${winningPlayerId} advanced to next round`);
-                        // ניסיון לקדם את הטורניר באופן אוטומטי
-                        try {
-                            await (0, tournament_logic_1.advanceTournamentRound)(tournament._id.toString());
+                        if (tournament.status === "completed") {
+                            console.log("🏁 Tournament is already completed. Skipping advancement.");
                         }
-                        catch (advanceError) {
-                            console.error("❌ Error advancing tournament:", advanceError);
-                            // איננו מחזירים שגיאה למשתמש כי עדכון המשחק הצליח
+                        else {
+                            try {
+                                await (0, tournament_logic_1.advanceTournamentRound)(tournament._id.toString());
+                            }
+                            catch (advanceError) {
+                                console.error("❌ Error advancing tournament:", advanceError);
+                            }
                         }
                     }
                     break;

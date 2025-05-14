@@ -9,6 +9,16 @@ import TournamentModel from "../models/tournament_model";
 import { advanceTournamentRound } from "./tournament_logic"; // 💡 חשוב לייבא נכון
 import mongoose from "mongoose";
 
+const getBracketName = (playerCount: number): string => {
+  switch (playerCount) {
+    case 2: return "Final";
+    case 4: return "Semifinals";
+    case 8: return "Quarterfinals";
+    case 16: return "Round of 16";
+    case 32: return "Round of 32";
+    default: return `Round of ${playerCount}`;
+  }
+};
 
 
 
@@ -536,7 +546,6 @@ const startTournament = async (req: Request, res: Response) => {
       const p2Id = shuffled[i + 1];
 
       try {
-        // במקום לחפש משתמש, ננסה ליצור משחק פתוח ישירות
         const challengeRes = await axios.post<LichessChallengeResponse>(
           "https://lichess.org/api/challenge/open",
           {
@@ -553,9 +562,6 @@ const startTournament = async (req: Request, res: Response) => {
           }
         );
 
-        // עדכון ממשק LichessChallengeResponse קודם לכן
-        // טיפול בטוח ב-ID של המשחק
-        // השתמש ב-type assertion כדי לעקוף את בדיקת הטיפוס
         const responseData = challengeRes.data;
         const gameId = responseData.id || (responseData as any).challenge?.id;
         if (!gameId) {
@@ -578,14 +584,10 @@ const startTournament = async (req: Request, res: Response) => {
         });
 
         console.log(`📝 Match created: ${p1Id} vs ${p2Id} (game: ${gameUrl})`);
-        
-        // המתן מעט בין בקשות כדי להימנע מ-rate limiting
         await new Promise(resolve => setTimeout(resolve, 1500));
         
       } catch (err) {
         console.error(`❌ Error creating match for ${p1Id} vs ${p2Id}:`, err);
-        
-        // יצירת רשומת משחק עם סימון שגיאה
         matches.push({
           player1: p1Id,
           player2: p2Id,
@@ -598,13 +600,15 @@ const startTournament = async (req: Request, res: Response) => {
       }
     }
 
+    const bracketName = getBracketName(shuffled.length + (byePlayer ? 1 : 0));
+
     const updatedTournament = await TournamentModel.findByIdAndUpdate(
       tournament._id,
       {
         $set: {
           bracket: [
             {
-              name: "Round 1",
+              name: bracketName,
               matches,
               startTime: new Date(),
             },
@@ -638,6 +642,7 @@ const startTournament = async (req: Request, res: Response) => {
 
 
 
+
 const updateMatchResultByLichessUrl = async (
   req: Request,
   res: Response
@@ -651,13 +656,11 @@ const updateMatchResultByLichessUrl = async (
       return res.status(400).json({ error: "Missing lichessUrl" });
     }
 
-    // הפקת ה-gameId מה-URL
     const gameId = lichessUrl.split('/').pop()?.split('?')[0];
     if (!gameId) {
       return res.status(400).json({ error: "Invalid lichessUrl format" });
     }
 
-    // חיפוש הטורניר לפי URL מלא או לפי ID המשחק
     const tournament = await TournamentModel.findOne({
       $or: [
         { "bracket.matches.lichessUrl": lichessUrl },
@@ -675,19 +678,16 @@ const updateMatchResultByLichessUrl = async (
     let updated = false;
     let winningPlayerId: string | null = null;
 
-    // עדכון התוצאה במשחק המתאים
     for (let bracketIndex = 0; bracketIndex < tournament.bracket.length; bracketIndex++) {
       const bracket = tournament.bracket[bracketIndex];
 
       for (let matchIndex = 0; matchIndex < bracket.matches.length; matchIndex++) {
         const match = bracket.matches[matchIndex];
-        
-        // בדיקה אם המשחק מתאים לפי URL מלא או gameId
         const currentGameId = match.lichessUrl.split('/').pop()?.split('?')[0];
+
         if (match.lichessUrl === lichessUrl || currentGameId === gameId) {
           console.log(`✅ Found matching game in bracket ${bracketIndex}, match ${matchIndex}`);
 
-          // קביעת המנצח
           if (winner === "white") {
             winningPlayerId = match.player1;
           } else if (winner === "black") {
@@ -696,7 +696,6 @@ const updateMatchResultByLichessUrl = async (
             winningPlayerId = "draw";
           }
 
-          // עדכון המשחק
           const updatePath = `bracket.${bracketIndex}.matches.${matchIndex}`;
           const updateObj: Record<string, any> = {};
           updateObj[`${updatePath}.result`] = status || "completed";
@@ -710,7 +709,7 @@ const updateMatchResultByLichessUrl = async (
           console.log(`✅ Updated match result to status: ${status}, winner: ${winningPlayerId}`);
           updated = true;
 
-          // אם המשחק בסיבוב הנוכחי, הוספת המנצח לרשימת המתקדמים
+          // advancing
           if (
             bracketIndex === tournament.currentStage &&
             winningPlayerId !== "draw" &&
@@ -721,12 +720,14 @@ const updateMatchResultByLichessUrl = async (
             await tournament.save();
             console.log(`🏁 ${winningPlayerId} advanced to next round`);
 
-            // ניסיון לקדם את הטורניר באופן אוטומטי
-            try {
-              await advanceTournamentRound((tournament._id as mongoose.Types.ObjectId).toString());
-            } catch (advanceError) {
-              console.error("❌ Error advancing tournament:", advanceError);
-              // איננו מחזירים שגיאה למשתמש כי עדכון המשחק הצליח
+            if (tournament.status === "completed") {
+              console.log("🏁 Tournament is already completed. Skipping advancement.");
+            } else {
+              try {
+                await advanceTournamentRound((tournament._id as mongoose.Types.ObjectId).toString());
+              } catch (advanceError) {
+                console.error("❌ Error advancing tournament:", advanceError);
+              }
             }
           }
 
@@ -755,6 +756,14 @@ const updateMatchResultByLichessUrl = async (
     });
   }
 };
+
+
+
+
+
+
+
+
 
 export const getGameResult = async (req: Request, res: Response) => {
   const { gameId } = req.params;
