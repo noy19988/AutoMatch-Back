@@ -808,7 +808,217 @@ export const getGameResult = async (req: Request, res: Response) => {
   }
 };
 
+
+
+export const analyzePlayerStyle = async (req: Request, res: Response) => {
+  const { username } = req.params;
+
+  if (!username) {
+    return res.status(400).json({ error: "Missing username" });
+  }
+
+  try {
+    // נביא את המשחקים של השחקן מה-lichess
+    const response = await fetch(`https://lichess.org/api/games/user/${username}?max=10&opening=true`, {
+      headers: {
+        Accept: 'application/x-ndjson',
+      },
+    });
+
+    const text = await response.text();
+
+    if (!text || text.trim().length === 0) {
+      return res.status(404).json({ error: "No games found for user" });
+    }
+
+    // המשחקים מחולקים לפי שורות NDJSON
+    const games = text
+      .split('\n')
+      .filter(line => line.trim() !== "")
+      .map(line => JSON.parse(line));
+
+    const formattedGames = games.map(g => {
+      const result = g.winner ? `${g.winner} won` : 'draw';
+      return `- Opponent: ${g.players.white?.user?.name} vs ${g.players.black?.user?.name} | Result: ${result} | Opening: ${g.opening?.name ?? 'N/A'}`;
+    }).join('\n');
+
+    const prompt = `
+You are a chess expert AI. Given the following recent games of a Lichess player, describe their overall play style in up to 7 concise sentences.
+
+Games:
+${formattedGames}
+
+Describe their strengths, weaknesses, tendencies (e.g. aggressive openings, frequent use of tactics, endgame strength), and your impression of their level.
+Be fluent and natural in tone. Output in plain English only.
+`;
+
+    const responseFromGemini = await askGeminiRaw(prompt);
+
+    if (!responseFromGemini) {
+      return res.status(500).json({ error: "AI failed to generate analysis" });
+    }
+
+    return res.status(200).json({
+      username,
+      analysis: responseFromGemini.trim(),
+    });
+
+  } catch (err) {
+    console.error("❌ Error in analyzePlayerStyle:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+};
+
+
+
+export const analyzeSingleGame = async (req: Request, res: Response) => {
+  const { gameId, username } = req.params;
+
+  if (!gameId || !username) {
+    return res.status(400).json({ error: "Missing gameId or username" });
+  }
+
+  try {
+    // ניקוי מזהה המשחק
+    const cleanGameId = gameId.split('/').pop()?.split('?')[0] || gameId;
+    
+    console.log(`🔍 Attempting to fetch game: ${cleanGameId}`);
+    
+    const lichessApiUrl = `https://lichess.org/api/game/${cleanGameId}`;
+    console.log(`🌍 Fetching from: ${lichessApiUrl}`);
+    
+    // פונקציה לביצוע ניסיונות חוזרים
+    const fetchWithRetry = async (url: string, options: any, retries = 3, timeout = 15000) => {
+      let lastError;
+      
+      for (let attempt = 0; attempt < retries; attempt++) {
+        try {
+          console.log(`🔄 Fetch attempt ${attempt + 1}/${retries}`);
+          // הוספת timeout ארוך יותר
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), timeout);
+          
+          const fetchOptions = {
+            ...options,
+            signal: controller.signal
+          };
+          
+          const response = await fetch(url, fetchOptions);
+          clearTimeout(timeoutId);
+          return response;
+        } catch (error) {
+          console.log(`❌ Attempt ${attempt + 1} failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+          lastError = error;
+          
+          // המתנה לפני ניסיון נוסף (אם לא הניסיון האחרון)
+          if (attempt < retries - 1) {
+            const delay = Math.pow(2, attempt) * 1000; // עיכוב אקספוננציאלי: 1s, 2s, 4s...
+            console.log(`⏱ Waiting ${delay}ms before retry...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+          }
+        }
+      }
+      
+      throw lastError;
+    };
+    
+    const response = await fetchWithRetry(lichessApiUrl, {
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${process.env.LICHESS_PERSONAL_TOKEN}`
+      }
+    });
+
+    console.log(`📊 Response status: ${response.status}`);
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.log(`❌ Error response: ${errorText}`);
+      return res.status(404).json({
+        error: "Game not found or not available via API (private or invalid ID)",
+      });
+    }
+    
+    const game = await response.json();
+    console.log("Game data structure:", JSON.stringify(game, null, 2).substring(0, 500));
+
+    // המשך הקוד הקיים...
+    // טיפול במקרה שהנתונים חסרים
+    if (!game.players) {
+      return res.status(404).json({
+        error: "Game data is incomplete or invalid - missing players"
+      });
+    }
+
+    // בדיקה של שדה userId - זה המבנה הנכון של הנתונים מ-Lichess
+    const whitePlayerId = game.players.white?.userId || "";
+    const blackPlayerId = game.players.black?.userId || "";
+    
+    console.log(`Looking for player: ${username}`);
+    console.log(`White player ID: ${whitePlayerId}`);
+    console.log(`Black player ID: ${blackPlayerId}`);
+    
+    const lowerUsername = username.toLowerCase();
+    
+    const playerColor = 
+      whitePlayerId.toLowerCase() === lowerUsername ? "white" :
+      blackPlayerId.toLowerCase() === lowerUsername ? "black" : 
+      "unknown";
+    
+    console.log(`Detected player color: ${playerColor}`);
+    
+    if (playerColor === "unknown") {
+      console.log("Full player data:", JSON.stringify(game.players || {}, null, 2));
+      return res.status(404).json({
+        error: "Player not found in this game"
+      });
+    }
+
+    const result = game.winner
+      ? game.winner === playerColor
+        ? "won"
+        : "lost"
+      : "draw";
+
+    console.log(`Game result for ${username}: ${result}`);
+
+    // זיהוי האופונט
+    const opponentId = playerColor === "white" ? blackPlayerId : whitePlayerId;
+
+    const prompt = `
+You are a chess expert AI. Analyze this completed Lichess game for the player "${username}" who played as ${playerColor} and ${result}.
+
+Opening: ${game.opening?.name || "N/A"}
+Game result: ${game.status || game.winner ? "Win for " + game.winner : "Draw"}
+Opponent: ${opponentId}
+
+Please summarize the player's performance, and give 2-3 improvement suggestions or strengths. Output in natural English.
+
+Keep it short and focused.
+`;
+
+    const aiResponse = await askGeminiRaw(prompt);
+
+    if (!aiResponse) {
+      return res.status(500).json({ error: "AI failed to respond" });
+    }
+
+    return res.status(200).json({
+      username,
+      gameId: cleanGameId,
+      analysis: aiResponse.trim(),
+    });
+  } catch (err) {
+    console.error("❌ analyzeSingleGame failed:", err);
+    return res.status(500).json({ 
+      error: "Internal error analyzing game",
+      details: err instanceof Error ? err.message : "Unknown error"
+    });
+  }
+};
 export default {
+  analyzeSingleGame,
+  analyzePlayerStyle,
   loginWithLichess,
   lichessCallback,
   autoMatchWithAI,

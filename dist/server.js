@@ -48,6 +48,7 @@ app.use((req, res, next) => {
 app.use("/auth", auth_route_1.default);
 app.use("/auth/lichess", lichess_route_1.default);
 app.use("/api/lichess", lichess_api_route_1.default);
+console.log("✅ API routes loaded under /api/lichess");
 // app.use("/api/lichess", lichessRouter);
 // app.use(lichessRouter); // אפשר להוריד אם מיותר
 // ✅ Swagger Docs

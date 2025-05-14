@@ -129,4 +129,18 @@ router.get("/api/lichess/game/:gameUrl", async (req, res) => {
   }
 });
 
+
+router.get("/analyze/:username", (req, res, next) => {
+  console.log("🧠 Analyze route called for:", req.params.username);
+  next();
+}, lichessController.analyzePlayerStyle as unknown as express.RequestHandler);
+
+
+
+router.get(
+  "/analyze/game/:gameId/:username",
+  lichessController.analyzeSingleGame as unknown as express.RequestHandler
+);
+
+
 export default router;

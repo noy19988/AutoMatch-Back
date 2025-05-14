@@ -56,6 +56,8 @@ app.use((req, res, next) => {
 app.use("/auth", authController);
 app.use("/auth/lichess", lichessRouter);
 app.use("/api/lichess", apiRouter);
+console.log("✅ API routes loaded under /api/lichess");
+
 // app.use("/api/lichess", lichessRouter);
 // app.use(lichessRouter); // אפשר להוריד אם מיותר
 
