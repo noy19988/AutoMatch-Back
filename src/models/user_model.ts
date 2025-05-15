@@ -6,19 +6,23 @@ export interface IUser {
   password?: string; 
   _id?: string;
   refreshToken?: string[];
-
-  lichessId?: string; // 👈 הוספה חשובה
+  lichessId?: string;
   lichessAccessToken?: string;
-
+  
+  // שדות חדשים לניהול רמאות
+  cheatingDetections?: {
+    gameId: string;
+    timestamp: Date;
+    confidence: number;
+    analysis: string;
+  }[];
 }
 
 const userSchema = new Schema<IUser>({
   email: {
     type: String,
     unique: true,
-
-    sparse: true, // מאפשר קיום nullים ועדיין ייחודיות למי שיש ערך
-
+    sparse: true,
   },
   password: {
     type: String,
@@ -30,11 +34,21 @@ const userSchema = new Schema<IUser>({
   lichessId: {
     type: String,
     unique: true,
-    sparse: true, // 🆕 אותו עיקרון כמו email
+    sparse: true,
   },
   lichessAccessToken: {
-    type: String, // ✅ now it's in the correct place
+    type: String,
   },
+  // הוספת שדה חדש למעקב אחר חשדות לרמאות
+  cheatingDetections: {
+    type: [{
+      gameId: String,
+      timestamp: Date,
+      confidence: Number,
+      analysis: String
+    }],
+    default: []
+  }
 });
 
 const userModel = mongoose.model<IUser>("Users", userSchema);

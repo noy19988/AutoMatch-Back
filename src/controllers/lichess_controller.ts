@@ -1016,7 +1016,285 @@ Keep it short and focused.
     });
   }
 };
+
+
+
+
+export const detectCheating = async (req: Request, res: Response) => {
+  const { gameId, username } = req.params;
+
+  if (!gameId || !username) {
+    return res.status(400).json({ error: "Missing gameId or username" });
+  }
+
+  try {
+    // ניקוי מזהה המשחק
+    const cleanGameId = gameId.split('/').pop()?.split('?')[0] || gameId;
+    
+    console.log(`🔍 בדיקת רמאות למשחק: ${cleanGameId} עבור שחקן: ${username}`);
+    
+    // נמצא את המשתמש ב-DB כדי לקבל את הטוקן שלו
+    const playerUser = await userModel.findOne({ lichessId: username });
+    console.log(`🔑 משתמש נמצא: ${playerUser ? "כן" : "לא"}, יש טוקן: ${playerUser?.lichessAccessToken ? "כן" : "לא"}`);
+    
+    // נסה למצוא את היריב גם כן (למקרה שאין לנו את הטוקן של השחקן)
+    let opponentToken = null;
+    if (!playerUser?.lichessAccessToken) {
+      // בדיקת מי היריב
+      const gameInfo = await TournamentModel.findOne({ "bracket.matches.lichessUrl": { $regex: cleanGameId } });
+      if (gameInfo) {
+        const matchInfo = gameInfo.bracket.flatMap(b => b.matches).find(m => m.lichessUrl.includes(cleanGameId));
+        if (matchInfo) {
+          const opponentId = matchInfo.player1 === username ? matchInfo.player2 : matchInfo.player1;
+          const opponentUser = await userModel.findOne({ lichessId: opponentId });
+          opponentToken = opponentUser?.lichessAccessToken;
+          console.log(`🔎 נמצא יריב: ${opponentId}, יש טוקן: ${opponentToken ? "כן" : "לא"}`);
+        }
+      }
+    }
+    
+    // משתמשים ב-API הנכון להורדת PGN
+    const lichessApiUrl = `https://lichess.org/game/export/${cleanGameId}`;
+    
+    // יצירת AbortController לקביעת timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 שניות timeout
+    
+    // בחירת הטוקן הטוב ביותר שיש לנו
+    const authToken = playerUser?.lichessAccessToken || opponentToken || process.env.LICHESS_PERSONAL_TOKEN;
+    
+    // הגדרת אפשרויות הבקשה
+    const fetchOptions: RequestInit = {
+      headers: {
+        Accept: "application/x-chess-pgn", // מבקש PGN במקום JSON
+        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {})
+      },
+      signal: controller.signal
+    };
+    
+    console.log(`🔄 מנסה לקבל PGN מליצ'ס (עם טוקן: ${authToken ? "כן" : "לא"})`);
+    const response = await fetch(lichessApiUrl, fetchOptions);
+    // ניקוי הטיימר לאחר קבלת תשובה
+    clearTimeout(timeoutId);
+    
+    console.log(`📊 תשובה מליצ'ס: ${response.status}`);
+    
+    if (!response.ok) {
+      // אם נכשל עם טוקן, ננסה שוב בלי טוקן
+      if (authToken && response.status === 401) {
+        console.log(`🔄 ניסיון חוזר ללא טוקן`);
+        const noAuthOptions: RequestInit = {
+          headers: {
+            Accept: "application/x-chess-pgn"
+          },
+          signal: controller.signal
+        };
+        
+        const retryResponse = await fetch(lichessApiUrl, noAuthOptions);
+        if (retryResponse.ok) {
+          console.log(`✅ הניסיון החוזר ללא טוקן הצליח!`);
+          const pgn = await retryResponse.text();
+          return processPgn(pgn, cleanGameId, username, res);
+        }
+      }
+      
+      const errorText = await response.text();
+      console.log(`❌ שגיאה בתשובה מהשרת: ${errorText}`);
+      return res.status(404).json({
+        error: "המשחק לא נמצא או לא זמין דרך ה-API (פרטי או מזהה לא תקין)",
+      });
+    }
+    
+    // קבלת ה-PGN כטקסט
+    const pgn = await response.text();
+    console.log("PGN received:", pgn.substring(0, 200) + "...");
+    
+    return processPgn(pgn, cleanGameId, username, res);
+    
+  } catch (err) {
+    console.error("❌ שגיאה בזיהוי רמאות:", err);
+    return res.status(500).json({ 
+      error: "שגיאה פנימית בניתוח המשחק",
+      details: err instanceof Error ? err.message : "שגיאה לא ידועה"
+    });
+  }
+};
+
+async function processPgn(pgn: string, cleanGameId: string, username: string, res: Response) {
+  try {
+    // חילוץ מידע מה-PGN
+    const headers: Record<string, string> = {};
+    const headerRegex = /\[(.*?)\s"(.*?)"\]/g;
+    let match;
+    while ((match = headerRegex.exec(pgn)) !== null) {
+      headers[match[1]] = match[2];
+    }
+    
+    // חילוץ מהלכים
+    const movesText = pgn.split(/\d+\./).slice(1).join(' ');
+    console.log("Extracted moves:", movesText.substring(0, 100) + "...");
+    
+    // מידע על השחקנים
+    const whiteName = headers["White"] || "";
+    const blackName = headers["Black"] || "";
+    const whiteElo = headers["WhiteElo"] || "";
+    const blackElo = headers["BlackElo"] || "";
+    const opening = headers["Opening"] || "";
+    const timeControl = headers["TimeControl"] || "";
+    const result = headers["Result"] || "";
+    
+    console.log(`🔎 מחפש שחקן: ${username}`);
+    console.log(`⚪ שחקן לבן: ${whiteName}`);
+    console.log(`⚫ שחקן שחור: ${blackName}`);
+    
+    const lowerUsername = username.toLowerCase();
+    
+    const playerColor = 
+      whiteName.toLowerCase() === lowerUsername ? "white" :
+      blackName.toLowerCase() === lowerUsername ? "black" : 
+      "unknown";
+    
+    console.log(`🎯 זיהוי צבע השחקן: ${playerColor}`);
+    
+    if (playerColor === "unknown") {
+      return res.status(404).json({
+        error: "השחקן לא נמצא במשחק זה"
+      });
+    }
+
+    // התוצאה - ניצחון, הפסד או תיקו
+    const gameResult = 
+      result === "1-0" ? (playerColor === "white" ? "won" : "lost") :
+      result === "0-1" ? (playerColor === "black" ? "won" : "lost") :
+      "draw";
+
+    // זיהוי היריב
+    const opponentName = playerColor === "white" ? blackName : whiteName;
+    
+    // חילוץ ה-ELO של השחקנים
+    const playerRating = playerColor === "white" ? whiteElo : blackElo;
+    const opponentRating = playerColor === "white" ? blackElo : whiteElo;
+    
+    console.log(`📊 תוצאת המשחק עבור ${username}: ${gameResult}`);
+
+    // פרומפט ל-Gemini - באנגלית
+    const prompt = `
+You are a chess anti-cheating expert. Analyze this Lichess game to determine if the player "${username}" (who played as ${playerColor}) used computer engine assistance.
+
+Game ID: ${cleanGameId}
+Player: ${username} (rating: ${playerRating || 'unknown'})
+Opponent: ${opponentName} (rating: ${opponentRating || 'unknown'})
+Opening: ${opening || "N/A"}
+Time control: ${timeControl || 'unknown'}
+
+Complete game moves (PGN):
+${pgn}
+
+Analyze the game and determine if the player's moves show signs of potential engine use. Look for:
+
+1. Perfect or near-perfect play in complex positions
+2. Consistent finding of only moves or difficult tactical sequences
+3. Play that's inconsistent with the player's rating level
+4. Unusual time usage patterns
+5. Non-human move selection patterns
+
+Return your analysis as a JSON with these exact fields:
+{
+  "suspiciousPlay": true/false,
+  "confidence": 0-100,
+  "analysis": "detailed explanation of your findings",
+  "engineSimilarity": "description of how similar the play is to engine play"
+}
+
+Only return the JSON with no additional text, markdown formatting, or backticks.
+`;
+
+    console.log("🤖 שולח נתונים ל-Gemini לניתוח רמאות");
+    const aiResponse = await askGeminiRaw(prompt);
+
+    if (!aiResponse) {
+      return res.status(500).json({ error: "ה-AI נכשל בניתוח המשחק" });
+    }
+
+    // עיבוד התשובה מ-Gemini
+    let parsedResponse;
+    try {
+      // ניקוי התשובה במקרה שהיא כוללת תגי markdown
+      const cleanedResponse = aiResponse
+        .replace(/```json/g, '')
+        .replace(/```/g, '')
+        .trim();
+        
+      parsedResponse = JSON.parse(cleanedResponse);
+      
+      // אם התגלתה רמאות, שמור את המידע במסד הנתונים
+      if (parsedResponse.suspiciousPlay === true) {
+        await saveCheatingDetection(username, cleanGameId, parsedResponse);
+      }
+      
+    } catch (parseError) {
+      console.error("❌ נכשל בפירוק תשובת Gemini:", parseError);
+      console.log("תשובת AI גולמית:", aiResponse);
+      
+      return res.status(500).json({ 
+        error: "נכשל בפירוק ניתוח ה-AI",
+        rawResponse: aiResponse
+      });
+    }
+
+    // הכנת התוצאה הסופית
+    return res.status(200).json({
+      username,
+      gameId: cleanGameId,
+      suspiciousPlay: parsedResponse.suspiciousPlay,
+      confidence: parsedResponse.confidence,
+      analysis: parsedResponse.analysis,
+      engineSimilarity: parsedResponse.engineSimilarity
+    });
+  } catch (err) {
+    console.error("❌ שגיאה בעיבוד ה-PGN:", err);
+    return res.status(500).json({ 
+      error: "שגיאה פנימית בעיבוד נתוני המשחק",
+      details: err instanceof Error ? err.message : "שגיאה לא ידועה"
+    });
+  }
+}
+
+// פונקציה נפרדת לשמירת מידע על רמאות שהתגלתה
+async function saveCheatingDetection(username: string, gameId: string, detectionResult: any) {
+  try {
+    // מציאת המשתמש במונגו
+    const user = await userModel.findOne({ lichessId: username });
+    
+    if (!user) {
+      console.log(`⚠️ לא ניתן לשמור מידע על רמאות: משתמש ${username} לא נמצא במסד הנתונים`);
+      return;
+    }
+    
+    // הוספת המידע על הרמאות לרשימת החשדות של המשתמש
+    if (!user.cheatingDetections) {
+      user.cheatingDetections = [];
+    }
+    
+    user.cheatingDetections.push({
+      gameId,
+      timestamp: new Date(),
+      confidence: detectionResult.confidence,
+      analysis: detectionResult.analysis
+    });
+    
+    // שמירת השינויים
+    await user.save();
+    
+    console.log(`✅ נשמר מידע על חשד לרמאות עבור משתמש ${username} במשחק ${gameId}`);
+  } catch (error) {
+    console.error("❌ שגיאה בשמירת מידע על רמאות:", error);
+  }
+}
+
+
 export default {
+  detectCheating,
   analyzeSingleGame,
   analyzePlayerStyle,
   loginWithLichess,

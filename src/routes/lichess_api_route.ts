@@ -1,4 +1,4 @@
-import express from "express";
+import express, { Request, Response } from "express";
 import lichessController from "../controllers/lichess_controller";
 import TournamentModel from "../models/tournament_model";
 import { advanceTournamentRound } from "../controllers/tournament_logic";
@@ -140,6 +140,34 @@ router.get("/analyze/:username", (req, res, next) => {
 router.get(
   "/analyze/game/:gameId/:username",
   lichessController.analyzeSingleGame as unknown as express.RequestHandler
+);
+
+router.get(
+  "/tournaments/by-lichess-url/:lichessUrl",
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { lichessUrl } = req.params;
+
+      const tournament = await TournamentModel.findOne({
+        "bracket.matches.lichessUrl": `https://lichess.org/${lichessUrl}`,
+      }).select("tournamentName");
+
+      if (!tournament) {
+        res.status(404).json({ error: "Tournament not found" });
+        return; // ✅ prevent continuing to res.json(...)
+      }
+
+      res.json({ tournamentName: tournament.tournamentName });
+    } catch (err) {
+      console.error("❌ Error fetching tournament by lichessUrl:", err);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  }
+);
+
+router.get(
+  "/analyze/cheating/:gameId/:username",
+  lichessController.detectCheating as unknown as express.RequestHandler
 );
 
 

@@ -9,7 +9,7 @@ const userSchema = new Schema({
     email: {
         type: String,
         unique: true,
-        sparse: true, // מאפשר קיום nullים ועדיין ייחודיות למי שיש ערך
+        sparse: true,
     },
     password: {
         type: String,
@@ -21,11 +21,21 @@ const userSchema = new Schema({
     lichessId: {
         type: String,
         unique: true,
-        sparse: true, // 🆕 אותו עיקרון כמו email
+        sparse: true,
     },
     lichessAccessToken: {
-        type: String, // ✅ now it's in the correct place
+        type: String,
     },
+    // הוספת שדה חדש למעקב אחר חשדות לרמאות
+    cheatingDetections: {
+        type: [{
+                gameId: String,
+                timestamp: Date,
+                confidence: Number,
+                analysis: String
+            }],
+        default: []
+    }
 });
 const userModel = mongoose_1.default.model("Users", userSchema);
 exports.default = userModel;
