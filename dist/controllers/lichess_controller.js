@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.detectCheating = exports.analyzeSingleGame = exports.analyzePlayerStyle = exports.getGameResult = exports.createTournament = void 0;
+exports.getGameDataWithPgn = exports.detectCheating = exports.analyzeSingleGame = exports.analyzePlayerStyle = exports.getGameResult = exports.createTournament = void 0;
 const axios_1 = __importDefault(require("axios"));
 const user_model_1 = __importDefault(require("../models/user_model"));
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
@@ -730,99 +730,19 @@ const analyzeSingleGame = async (req, res) => {
         return res.status(400).json({ error: "Missing gameId or username" });
     }
     try {
-        // ניקוי מזהה המשחק
-        const cleanGameId = gameId.split('/').pop()?.split('?')[0] || gameId;
-        console.log(`🔍 Attempting to fetch game: ${cleanGameId}`);
-        const lichessApiUrl = `https://lichess.org/api/game/${cleanGameId}`;
-        console.log(`🌍 Fetching from: ${lichessApiUrl}`);
-        // פונקציה לביצוע ניסיונות חוזרים
-        const fetchWithRetry = async (url, options, retries = 3, timeout = 15000) => {
-            let lastError;
-            for (let attempt = 0; attempt < retries; attempt++) {
-                try {
-                    console.log(`🔄 Fetch attempt ${attempt + 1}/${retries}`);
-                    // הוספת timeout ארוך יותר
-                    const controller = new AbortController();
-                    const timeoutId = setTimeout(() => controller.abort(), timeout);
-                    const fetchOptions = {
-                        ...options,
-                        signal: controller.signal
-                    };
-                    const response = await fetch(url, fetchOptions);
-                    clearTimeout(timeoutId);
-                    return response;
-                }
-                catch (error) {
-                    console.log(`❌ Attempt ${attempt + 1} failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-                    lastError = error;
-                    // המתנה לפני ניסיון נוסף (אם לא הניסיון האחרון)
-                    if (attempt < retries - 1) {
-                        const delay = Math.pow(2, attempt) * 1000; // עיכוב אקספוננציאלי: 1s, 2s, 4s...
-                        console.log(`⏱ Waiting ${delay}ms before retry...`);
-                        await new Promise(resolve => setTimeout(resolve, delay));
-                    }
-                }
-            }
-            throw lastError;
-        };
-        const response = await fetchWithRetry(lichessApiUrl, {
-            headers: {
-                Accept: "application/json",
-                Authorization: `Bearer ${process.env.LICHESS_PERSONAL_TOKEN}`
-            }
-        });
-        console.log(`📊 Response status: ${response.status}`);
-        if (!response.ok) {
-            const errorText = await response.text();
-            console.log(`❌ Error response: ${errorText}`);
-            return res.status(404).json({
-                error: "Game not found or not available via API (private or invalid ID)",
-            });
-        }
-        const game = await response.json();
-        console.log("Game data structure:", JSON.stringify(game, null, 2).substring(0, 500));
-        // המשך הקוד הקיים...
-        // טיפול במקרה שהנתונים חסרים
-        if (!game.players) {
-            return res.status(404).json({
-                error: "Game data is incomplete or invalid - missing players"
-            });
-        }
-        // בדיקה של שדה userId - זה המבנה הנכון של הנתונים מ-Lichess
-        const whitePlayerId = game.players.white?.userId || "";
-        const blackPlayerId = game.players.black?.userId || "";
-        console.log(`Looking for player: ${username}`);
-        console.log(`White player ID: ${whitePlayerId}`);
-        console.log(`Black player ID: ${blackPlayerId}`);
-        const lowerUsername = username.toLowerCase();
-        const playerColor = whitePlayerId.toLowerCase() === lowerUsername ? "white" :
-            blackPlayerId.toLowerCase() === lowerUsername ? "black" :
-                "unknown";
-        console.log(`Detected player color: ${playerColor}`);
-        if (playerColor === "unknown") {
-            console.log("Full player data:", JSON.stringify(game.players || {}, null, 2));
-            return res.status(404).json({
-                error: "Player not found in this game"
-            });
-        }
-        const result = game.winner
-            ? game.winner === playerColor
-                ? "won"
-                : "lost"
-            : "draw";
-        console.log(`Game result for ${username}: ${result}`);
-        // זיהוי האופונט
-        const opponentId = playerColor === "white" ? blackPlayerId : whitePlayerId;
+        const gameData = await (0, exports.getGameDataWithPgn)(gameId, username);
         const prompt = `
-You are a chess expert AI. Analyze this completed Lichess game for the player "${username}" who played as ${playerColor} and ${result}.
+You are a chess expert AI. Analyze the following PGN game played by ${username}, who played as ${gameData.playerColor} and ${gameData.gameResult}.
 
-Opening: ${game.opening?.name || "N/A"}
-Game result: ${game.status || game.winner ? "Win for " + game.winner : "Draw"}
-Opponent: ${opponentId}
+Opponent: ${gameData.opponent} (${gameData.opponentRating})
+Opening: ${gameData.opening}
+Time Control: ${gameData.timeControl}
 
-Please summarize the player's performance, and give 2-3 improvement suggestions or strengths. Output in natural English.
+Here is the complete PGN:
+${gameData.pgn}
 
-Keep it short and focused.
+Please write a short analysis of the player's performance, highlighting 2-3 specific strengths or areas for improvement.
+Use clear language. Avoid unnecessary fluff.
 `;
         const aiResponse = await (0, GeminiApi_1.askGeminiRaw)(prompt);
         if (!aiResponse) {
@@ -830,15 +750,15 @@ Keep it short and focused.
         }
         return res.status(200).json({
             username,
-            gameId: cleanGameId,
+            gameId: gameData.cleanGameId,
             analysis: aiResponse.trim(),
         });
     }
     catch (err) {
         console.error("❌ analyzeSingleGame failed:", err);
         return res.status(500).json({
-            error: "Internal error analyzing game",
-            details: err instanceof Error ? err.message : "Unknown error"
+            error: "Failed to analyze game",
+            details: err instanceof Error ? err.message : "Unknown error",
         });
     }
 };
@@ -1073,6 +993,108 @@ async function saveCheatingDetection(username, gameId, detectionResult) {
         console.error("❌ שגיאה בשמירת מידע על רמאות:", error);
     }
 }
+const getGameDataWithPgn = async (gameId, username) => {
+    console.log(`🔍 התחלת getGameDataWithPgn עבור משחק ${gameId} ושחקן ${username}`);
+    const cleanGameId = gameId.split('/').pop()?.split('?')[0] || gameId;
+    console.log(`🧹 מזהה משחק מנוקה: ${cleanGameId}`);
+    // First try to find the user to get their personal token
+    const playerUser = await user_model_1.default.findOne({ lichessId: username });
+    console.log(`👤 נמצא משתמש: ${playerUser ? 'כן' : 'לא'}`);
+    const personalToken = playerUser?.lichessAccessToken;
+    const envToken = process.env.LICHESS_PERSONAL_TOKEN;
+    console.log(`🔑 טוקן משתמש: ${personalToken ? 'זמין' : 'לא זמין'}`);
+    console.log(`🔑 טוקן סביבה: ${envToken ? 'זמין' : 'לא זמין'}`);
+    const authToken = personalToken || envToken;
+    // Try with authentication first
+    let response;
+    console.log(`🔄 מנסה לקבל נתונים מ-Lichess...`);
+    try {
+        if (authToken) {
+            console.log(`🔒 מנסה עם אימות`);
+            response = await fetch(`https://lichess.org/game/export/${cleanGameId}`, {
+                headers: {
+                    Accept: "application/x-chess-pgn",
+                    Authorization: `Bearer ${authToken}`,
+                },
+            });
+            console.log(`📊 סטטוס תשובה: ${response.status}`);
+            // If auth fails, try without token
+            if (response.status === 401) {
+                console.log(`⚠️ אימות נכשל, מנסה ללא טוקן`);
+                response = await fetch(`https://lichess.org/game/export/${cleanGameId}`, {
+                    headers: {
+                        Accept: "application/x-chess-pgn",
+                    },
+                });
+                console.log(`📊 סטטוס תשובה (ללא אימות): ${response.status}`);
+            }
+        }
+        else {
+            // No token available, try unauthenticated request
+            console.log(`⚠️ אין טוקן זמין, מנסה ללא אימות`);
+            response = await fetch(`https://lichess.org/game/export/${cleanGameId}`, {
+                headers: {
+                    Accept: "application/x-chess-pgn",
+                },
+            });
+            console.log(`📊 סטטוס תשובה (ללא אימות): ${response.status}`);
+        }
+    }
+    catch (error) {
+        // בדיקה אם error הוא מסוג Error
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+        console.error(`❌ שגיאה בקריאת ה-API:`, error);
+        throw new Error(`Failed to connect to Lichess API: ${errorMessage}`);
+    }
+    if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`❌ תשובה לא תקינה מ-API: ${response.status}, ${errorText}`);
+        throw new Error(`Failed to fetch PGN: ${errorText}`);
+    }
+    const pgn = await response.text();
+    console.log(`✅ התקבל PGN באורך ${pgn.length} תווים`);
+    console.log(`📝 PGN המלא:\n${pgn}`);
+    // חילוץ מידע
+    const headers = {};
+    const headerRegex = /\[(.*?)\s"(.*?)"\]/g;
+    let match;
+    while ((match = headerRegex.exec(pgn)) !== null) {
+        headers[match[1]] = match[2];
+    }
+    console.log(`📋 כותרות PGN:`, headers);
+    // חילוץ מהלכים
+    const movesText = pgn.split(/\n\n/)[1] || "";
+    console.log(`♟️ מהלכי המשחק:\n${movesText}`);
+    const white = headers["White"]?.toLowerCase() || "";
+    const black = headers["Black"]?.toLowerCase() || "";
+    const playerColor = username.toLowerCase() === white ? "white" :
+        username.toLowerCase() === black ? "black" :
+            "unknown";
+    console.log(`♟️ צבע השחקן זוהה: ${playerColor}`);
+    if (playerColor === "unknown") {
+        console.error(`❌ השחקן ${username} לא נמצא במשחק`);
+        throw new Error(`Player ${username} not found in game`);
+    }
+    const resultStr = headers["Result"];
+    const gameResult = resultStr === "1-0" ? (playerColor === "white" ? "won" : "lost") :
+        resultStr === "0-1" ? (playerColor === "black" ? "won" : "lost") :
+            "draw";
+    console.log(`🏁 תוצאת המשחק: ${gameResult}`);
+    const result = {
+        cleanGameId,
+        pgn,
+        playerColor,
+        gameResult,
+        opponent: playerColor === "white" ? headers["Black"] : headers["White"],
+        playerRating: playerColor === "white" ? headers["WhiteElo"] : headers["BlackElo"],
+        opponentRating: playerColor === "white" ? headers["BlackElo"] : headers["WhiteElo"],
+        opening: headers["Opening"] || "N/A",
+        timeControl: headers["TimeControl"] || "unknown",
+    };
+    console.log(`✅ מחזיר מידע מלא:`, JSON.stringify(result, null, 2));
+    return result;
+};
+exports.getGameDataWithPgn = getGameDataWithPgn;
 exports.default = {
     detectCheating: exports.detectCheating,
     analyzeSingleGame: exports.analyzeSingleGame,
