@@ -68,6 +68,8 @@ router.get("/tournaments/search", async (req, res) => {
   }
 });
 
+
+
 router.get(
   "/tournaments/:id",
   (async (req, res) => {
@@ -187,22 +189,20 @@ router.get(
   async (req: Request, res: Response): Promise<void> => {
     try {
       const { lichessUrl } = req.params;
+      const fullUrl = `https://lichess.org/${lichessUrl}`;
 
       const tournament = await TournamentModel.findOne({
-        "rounds.matches.lichessUrl": `https://lichess.org/${lichessUrl}`,
+        "bracket.matches.lichessUrl": fullUrl,
       }).select("tournamentName");
 
       if (!tournament) {
-        res.status(404).json({ error: "Tournament not found" });
-        return;
+         res.status(404).json({ error: "Tournament not found" });
       }
 
-      // Mongoose select may strip the field from types, so we cast it
       const tournamentName = (tournament as any).tournamentName;
-
       res.json({ tournamentName });
     } catch (err) {
-      console.error("Error fetching tournament by lichessUrl:", err);
+      console.error("❌ Error fetching tournament by lichessUrl:", err);
       res.status(500).json({ error: "Internal server error" });
     }
   }
@@ -212,6 +212,53 @@ router.get(
   "/analyze/cheating/:gameId/:username",
   lichessController.detectCheating as unknown as express.RequestHandler
 );
+
+// New backend route (you need to add this in Express)
+// ✅ backend route
+router.get("/tournaments/earnings/:lichessId/:lichessUrl",  async (req: Request, res: Response): Promise<void> =>{
+  const { lichessId, lichessUrl } = req.params;
+
+  try {
+    const tournament = await TournamentModel.findOne({
+      "bracket.matches.lichessUrl": `https://lichess.org/${lichessUrl}`,
+    });
+
+    if (!tournament) { 
+      res.status(404).json({ amount: 0 })
+      return;} ;
+
+
+    const match = tournament.bracket
+      .flatMap((b) => b.matches)
+      .find((m) => m.lichessUrl === `https://lichess.org/${lichessUrl}`);
+
+    if (!match) {
+      res.status(404).json({ amount: 0 });
+      return 
+    }
+
+    const entryFee = tournament.entryFee ?? 10;
+    const prizePool = (tournament.maxPlayers ?? 2) * entryFee;
+
+    let amount = 0;
+    const isWinner = match.winner?.toLowerCase() === lichessId.toLowerCase();
+    const isDraw = match.result === "draw"; // <-- Ensure you store this in DB if not
+
+    if (isWinner) {
+      amount = prizePool;
+    } else if (isDraw) {
+      amount = entryFee; // or prizePool / players if you want to split
+    } else {
+      amount = -entryFee;
+    }
+
+    res.json({ amount });
+  } catch (err) {
+    console.error("❌ Earnings error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 
 
 export default router;
