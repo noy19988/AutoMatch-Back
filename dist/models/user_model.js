@@ -26,16 +26,21 @@ const userSchema = new Schema({
     lichessAccessToken: {
         type: String,
     },
-    // הוספת שדה חדש למעקב אחר חשדות לרמאות
+    balance: {
+        type: Number,
+        required: true, // חובה – תוודא שניתן ערך בקוד יצירת המשתמש
+    },
     cheatingDetections: {
-        type: [{
+        type: [
+            {
                 gameId: String,
                 timestamp: Date,
                 confidence: Number,
-                analysis: String
-            }],
-        default: []
-    }
+                analysis: String,
+            },
+        ],
+        default: [],
+    },
 });
 const userModel = mongoose_1.default.model("Users", userSchema);
 exports.default = userModel;

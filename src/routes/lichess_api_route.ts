@@ -28,6 +28,46 @@ router.post(
   lichessController.createTournament as express.RequestHandler
 );
 
+router.get("/tournaments/search", async (req, res) => {
+  const entryFeeRaw = req.query.entryFee;
+  const rankRangeRaw = req.query.rankRange;
+
+  const entryFee = Array.isArray(entryFeeRaw) ? entryFeeRaw[0] : entryFeeRaw;
+  const rankRange = Array.isArray(rankRangeRaw)
+    ? rankRangeRaw[0]
+    : rankRangeRaw;
+
+  const filter: any = {
+    visibility: "public",
+    // Temporarily disable this to debug
+    // entryFee: { $lte: parseInt(entryFee as string) || 100 },
+  };
+
+  if (rankRange && typeof rankRange === "string" && rankRange !== "any") {
+    const ranges: Record<string, { min: number; max: number }> = {
+      beginner: { min: 0, max: 1200 },
+      intermediate: { min: 1200, max: 1400 },
+      pro: { min: 1400, max: 1700 },
+      elite: { min: 1700, max: 2200 },
+    };
+
+    const range = ranges[rankRange];
+    if (range) {
+      filter["rankRange.min"] = { $lte: range.min };
+      filter["rankRange.max"] = { $gte: range.max };
+    }
+  }
+
+  try {
+    const tournaments = await TournamentModel.find(filter);
+    console.log("🎯 Matching tournaments:", tournaments.length);
+    res.json({ tournaments });
+  } catch (err) {
+    console.error("❌ Error searching tournaments:", err);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
 router.get(
   "/tournaments/:id",
   (async (req, res) => {
@@ -149,17 +189,20 @@ router.get(
       const { lichessUrl } = req.params;
 
       const tournament = await TournamentModel.findOne({
-        "bracket.matches.lichessUrl": `https://lichess.org/${lichessUrl}`,
+        "rounds.matches.lichessUrl": `https://lichess.org/${lichessUrl}`,
       }).select("tournamentName");
 
       if (!tournament) {
         res.status(404).json({ error: "Tournament not found" });
-        return; // ✅ prevent continuing to res.json(...)
+        return;
       }
 
-      res.json({ tournamentName: tournament.tournamentName });
+      // Mongoose select may strip the field from types, so we cast it
+      const tournamentName = (tournament as any).tournamentName;
+
+      res.json({ tournamentName });
     } catch (err) {
-      console.error("❌ Error fetching tournament by lichessUrl:", err);
+      console.error("Error fetching tournament by lichessUrl:", err);
       res.status(500).json({ error: "Internal server error" });
     }
   }

@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
 const router = express_1.default.Router();
 const auth_controller_1 = __importDefault(require("../controllers/auth_controller"));
+const base_controller_1 = require("../controllers/base_controller");
 /**
 * @swagger
 * tags:
@@ -169,4 +170,5 @@ router.post("/logout", auth_controller_1.default.logout);
  *         description: Internal server error
  */
 router.post("/refresh", auth_controller_1.default.refresh);
+router.get("/users/:lichessId/balance", base_controller_1.getUserBalance);
 exports.default = router;

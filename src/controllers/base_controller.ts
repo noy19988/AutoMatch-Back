@@ -1,5 +1,6 @@
-import { Request, Response } from "express";
+import { Request, RequestHandler, Response } from "express";
 import { Model } from "mongoose";
+import userModel from "../models/user_model";
 
 class BaseController<T> {
   model: Model<T>;
@@ -58,4 +59,29 @@ class BaseController<T> {
   };
 
 };
+
+
+
+export const getUserBalance: RequestHandler = async (req, res) => {
+  const { lichessId } = req.params;
+
+  try {
+    const user = await userModel.findOne({ lichessId });
+    if (!user) {
+      res.status(404).json({ error: "User not found" });
+      return;
+    }
+
+    res.json({
+      lichessId: user.lichessId,
+      balance: user.balance ?? 0,
+    });
+  } catch (err) {
+    console.error("❌ Error fetching user:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+};
+
+
+
 export default BaseController;

@@ -29,7 +29,8 @@ const register = async (req, res) => {
         const hashedPassword = await bcrypt_1.default.hash(password, 10);
         const user = await user_model_1.default.create({
             email: req.body.email,
-            password: hashedPassword
+            password: hashedPassword,
+            balance: 0,
         });
         res.status(200).send(user);
     }

@@ -256,8 +256,10 @@ const lichessCallback = async (req: Request, res: Response): Promise<void> => {
         user = await userModel.create({
           lichessId,
           lichessAccessToken: accessToken,
+          balance: 0,
         });
-      } else {
+      }
+       else {
         console.log(`✏️ Updating existing user: ${lichessId}`);
         user.lichessAccessToken = accessToken;
         await user.save();
@@ -380,68 +382,98 @@ function cleanJsonFromAI(raw: string | null): string {
   return (raw || "").replace(/json/g, "").replace(/ /g, "").trim();
 }
 
-const createTournament = async (req: Request, res: Response) => {
-  const { createdBy, playerIds, maxPlayers, tournamentName } = req.body;
-  console.log("🎯 Received tournament body:", req.body);
-
-  // Ensure the tournament name is provided
-  if (
-    !tournamentName ||
-    !createdBy ||
-    !Array.isArray(playerIds) ||
-    playerIds.length < 1
-  ) {
-    return res.status(400).json({
-      error: "Tournament name, at least one player, and creator are required.",
-    });
-  }
+export const createTournament = async (req: Request, res: Response) => {
+  const {
+    createdBy,
+    playerIds,
+    maxPlayers,
+    tournamentName,
+    visibility,
+    entryFee,
+  } = req.body;
 
   try {
     const creator = await userModel.findById(createdBy);
-    if (!creator || !creator.lichessAccessToken) {
+
+    if (!creator) {
+      console.warn("❌ Creator not found:", createdBy);
+      return res.status(403).json({ error: "User not found" });
+    }
+
+    if (!creator.lichessAccessToken) {
+      console.warn("❌ Creator missing Lichess access token:", creator._id);
       return res
         .status(403)
-        .json({ error: "Tournament creator not authorized with Lichess." });
+        .json({ error: "User not authenticated with Lichess" });
     }
 
-    // Check if a completed tournament exists with the same parameters
-    const existingTournament = await TournamentModel.findOne({
-      createdBy,
-      maxPlayers,
-      status: "completed", // Only check for completed tournaments
-    });
-
-    if (existingTournament) {
-      console.log("✅ Found a completed tournament. It can be replaced.");
-      // Optionally delete the completed tournament
-      await TournamentModel.deleteOne({ _id: existingTournament._id });
-      console.log("🧹 Deleted the completed tournament:", existingTournament);
+    // 💰 בדיקת balance של היוצר
+    if ((creator.balance ?? 0) < entryFee) {
+      return res.status(403).json({
+        error: "Insufficient balance to create the tournament",
+        currentBalance: creator.balance ?? 0,
+        required: entryFee,
+      });
     }
 
+    // (אופציונלי) - עדכון balance בשרת רק כשהטורניר מתחיל (בשלב ה-start), אז פה לא מחייבים בפועל
+
+    // 🎯 הבאת רייטינג מ-Lichess
+    const userRes = await fetch(
+      `https://lichess.org/api/user/${creator.lichessId}`
+    );
+    if (!userRes.ok) {
+      console.warn(
+        "⚠️ Failed to fetch user data from Lichess:",
+        userRes.statusText
+      );
+    }
+
+    const userData = await userRes.json();
+    const blitzRating = userData?.perfs?.blitz?.rating ?? 1500;
+
+    // קביעת טווח דירוג
+    let rankRange = { label: "Beginner", min: 0, max: 1200 };
+    if (blitzRating >= 1200 && blitzRating < 1400) {
+      rankRange = { label: "Intermediate", min: 1200, max: 1400 };
+    } else if (blitzRating >= 1400 && blitzRating < 1700) {
+      rankRange = { label: "Pro", min: 1400, max: 1700 };
+    } else if (blitzRating >= 1700) {
+      rankRange = { label: "Elite", min: 1700, max: 2200 };
+    }
+
+    // חישוב סכום הפרס
+    const tournamentPrize = entryFee * maxPlayers;
+
+    // ✅ יצירת הטורניר
     const tournament = await TournamentModel.create({
       tournamentName,
       createdBy,
       playerIds,
+      maxPlayers,
+      visibility,
+      entryFee,
+      tournamentPrize,
       rated: true,
-      maxPlayers: parseInt(maxPlayers, 10),
-      bracket: [], // במקום rounds
-      currentStage: 0, // התחלה מ-Round 1
-      advancingPlayers: [],
+      rounds: [],
       winner: null,
       status: "active",
+      rankRange,
     });
-    
 
     res.status(201).json({
       message: "Tournament created",
       tournament,
-      lobbyUrl: `${frontendUrl}/lobby/${tournament._id}`,
+      rankRange,
+      lobbyUrl: `${process.env.BASE_URL}/lobby/${tournament._id}`,
     });
   } catch (error) {
     console.error("❌ Error creating tournament:", error);
     res.status(500).json({ error: "Internal server error." });
   }
 };
+
+
 
 const joinLobby = async (req: Request, res: Response) => {
   const { username } = req.body;
@@ -451,8 +483,18 @@ const joinLobby = async (req: Request, res: Response) => {
 
   try {
     const tournament = await TournamentModel.findById(id);
-    if (!tournament)
+    if (!tournament) {
       return res.status(404).json({ error: "Tournament not found" });
+    }
+
+    const user = await userModel.findOne({ lichessId: username });
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    if ((user.balance ?? 0) < tournament.entryFee) {
+      return res.status(403).json({ error: "Insufficient balance to join tournament" });
+    }
 
     if (!tournament.playerIds.includes(username)) {
       tournament.playerIds.push(username);
@@ -461,7 +503,7 @@ const joinLobby = async (req: Request, res: Response) => {
 
     res.json({ message: "Joined", tournament });
   } catch (err) {
-    console.error(err);
+    console.error("❌ joinLobby error:", err);
     res.status(500).json({ error: "Server error" });
   }
 };
@@ -503,7 +545,7 @@ const startTournament = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     console.log(`🔄 התחלת טורניר ${id}`);
-    
+
     const tournament = await TournamentModel.findById(id);
     if (!tournament) {
       return res.status(404).json({ error: "Tournament not found" });
@@ -529,6 +571,30 @@ const startTournament = async (req: Request, res: Response) => {
       return res.status(403).json({ error: "Creator not authorized with Lichess" });
     }
 
+    // ✅ בדיקה וחיוב של כל שחקן
+    const entryFee = tournament.entryFee ?? 0;
+    for (const lichessId of tournament.playerIds) {
+      const user = await userModel.findOne({ lichessId });
+      if (!user) {
+        return res.status(404).json({ error: `User ${lichessId} not found` });
+      }
+      if ((user.balance ?? 0) < entryFee) {
+        return res.status(403).json({
+          error: `User ${lichessId} does not have enough balance to join this tournament`,
+        });
+      }
+    }
+
+    for (const lichessId of tournament.playerIds) {
+  const user = await userModel.findOne({ lichessId });
+  if (user) {
+    user.balance = (user.balance ?? 0) - entryFee;
+    await user.save();
+  }
+}
+
+
+    // 👥 הכנה לשיבוץ שחקנים
     const validPlayers = tournament.playerIds.filter(Boolean);
     const shuffled = validPlayers.sort(() => 0.5 - Math.random());
     const matches = [];
@@ -541,6 +607,7 @@ const startTournament = async (req: Request, res: Response) => {
       }
     }
 
+    // 🎯 יצירת משחקים
     for (let i = 0; i < shuffled.length; i += 2) {
       const p1Id = shuffled[i];
       const p2Id = shuffled[i + 1];
@@ -558,7 +625,7 @@ const startTournament = async (req: Request, res: Response) => {
               Authorization: `Bearer ${creator.lichessAccessToken}`,
               Accept: "application/json",
             },
-            timeout: 10000
+            timeout: 10000,
           }
         );
 
@@ -584,8 +651,7 @@ const startTournament = async (req: Request, res: Response) => {
         });
 
         console.log(`📝 Match created: ${p1Id} vs ${p2Id} (game: ${gameUrl})`);
-        await new Promise(resolve => setTimeout(resolve, 1500));
-        
+        await new Promise((resolve) => setTimeout(resolve, 1500));
       } catch (err) {
         console.error(`❌ Error creating match for ${p1Id} vs ${p2Id}:`, err);
         matches.push({
@@ -634,6 +700,7 @@ const startTournament = async (req: Request, res: Response) => {
     });
   }
 };
+
 
 
 

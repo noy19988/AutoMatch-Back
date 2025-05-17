@@ -1,5 +1,10 @@
 "use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.getUserBalance = void 0;
+const user_model_1 = __importDefault(require("../models/user_model"));
 class BaseController {
     constructor(model) {
         this.model = model;
@@ -61,4 +66,23 @@ class BaseController {
     ;
 }
 ;
+const getUserBalance = async (req, res) => {
+    const { lichessId } = req.params;
+    try {
+        const user = await user_model_1.default.findOne({ lichessId });
+        if (!user) {
+            res.status(404).json({ error: "User not found" });
+            return;
+        }
+        res.json({
+            lichessId: user.lichessId,
+            balance: user.balance ?? 0,
+        });
+    }
+    catch (err) {
+        console.error("❌ Error fetching user:", err);
+        res.status(500).json({ error: "Internal server error" });
+    }
+};
+exports.getUserBalance = getUserBalance;
 exports.default = BaseController;

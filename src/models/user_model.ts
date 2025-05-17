@@ -2,14 +2,13 @@ import mongoose from "mongoose";
 const Schema = mongoose.Schema;
 
 export interface IUser {
-  email?: string; 
-  password?: string; 
+  email?: string;
+  password?: string;
   _id?: string;
   refreshToken?: string[];
   lichessId?: string;
   lichessAccessToken?: string;
-  
-  // שדות חדשים לניהול רמאות
+  balance?: number; // 💰 שדה חדש לניהול יתרה
   cheatingDetections?: {
     gameId: string;
     timestamp: Date;
@@ -39,16 +38,21 @@ const userSchema = new Schema<IUser>({
   lichessAccessToken: {
     type: String,
   },
-  // הוספת שדה חדש למעקב אחר חשדות לרמאות
+  balance: {
+    type: Number,
+    required: true, // חובה – תוודא שניתן ערך בקוד יצירת המשתמש
+  },
   cheatingDetections: {
-    type: [{
-      gameId: String,
-      timestamp: Date,
-      confidence: Number,
-      analysis: String
-    }],
-    default: []
-  }
+    type: [
+      {
+        gameId: String,
+        timestamp: Date,
+        confidence: Number,
+        analysis: String,
+      },
+    ],
+    default: [],
+  },
 });
 
 const userModel = mongoose.model<IUser>("Users", userSchema);

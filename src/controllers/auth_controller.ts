@@ -30,8 +30,10 @@ const register = async (req: Request, res: Response) => {
         const hashedPassword = await bcrypt.hash(password, 10);
         const user = await userModel.create({
             email: req.body.email,
-            password: hashedPassword
-        });
+            password: hashedPassword,
+            balance: 0,
+          });
+          
         res.status(200).send(user);
     } catch (err) {
         res.status(400).send("wrong email or password");

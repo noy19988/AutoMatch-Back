@@ -25,11 +25,19 @@ export interface TournamentDocument extends Document {
   playerIds: string[];
   maxPlayers: number;
   rated: boolean;
+  entryFee: number; // ✅ חדש
+  tournamentPrize: number; // ✅ חדש
   bracket: BracketStage[];
   currentStage: number;
-  advancingPlayers: string[]; // tracking of players who advanced from currentStage
+  advancingPlayers: string[];
   winner: string | null;
   status: "active" | "completed";
+  visibility?: "public" | "private";
+  rankRange?: {
+    label: string;
+    min: number;
+    max: number;
+  };
 }
 
 const matchSchema = new Schema<Match>(
@@ -64,16 +72,30 @@ const tournamentSchema = new Schema<TournamentDocument>(
       required: true,
     },
     playerIds: { type: [String], required: true },
+    visibility: {
+      type: String,
+      enum: ["public", "private"],
+      default: "private",
+    },
     maxPlayers: { type: Number, required: true },
     rated: { type: Boolean, default: true },
+    entryFee: { type: Number, default: 0 },       // ✅ חדש
+    tournamentPrize: { type: Number, default: 0 },   // ✅ חדש
     bracket: [bracketStageSchema],
-    currentStage: { type: Number, default: 0 }, // שלב נוכחי
-    advancingPlayers: { type: [String], default: [] }, // שחקנים שעברו שלב
+    currentStage: { type: Number, default: 0 },
+    advancingPlayers: { type: [String], default: [] },
     winner: { type: String, default: null },
     status: {
       type: String,
       enum: ["active", "completed"],
       default: "active",
+    },
+    rankRange: {
+      type: {
+        label: String,
+        min: Number,
+        max: Number,
+      },
     },
   },
   { timestamps: true }

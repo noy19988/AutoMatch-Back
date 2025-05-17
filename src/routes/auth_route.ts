@@ -1,6 +1,7 @@
 import express from "express";
 const router = express.Router();
 import authController from "../controllers/auth_controller";
+import { getUserBalance } from "../controllers/base_controller"; 
 
 /**
 * @swagger
@@ -173,6 +174,10 @@ router.post("/logout", authController.logout);
  *         description: Internal server error
  */
 router.post("/refresh", authController.refresh);
+
+router.get("/users/:lichessId/balance", getUserBalance);
+
+
 
 
 export default router;

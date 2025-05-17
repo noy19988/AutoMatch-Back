@@ -79,6 +79,17 @@ export const advanceTournamentRound = async (tournamentId: string) => {
       tournament.status = "completed";
       tournament.winner = uniqueWinners[0] || null;
       await tournament.save();
+      if (tournament.winner && tournament.tournamentPrize > 0) {
+        const winnerUser = await userModel.findOne({ lichessId: tournament.winner });
+        if (winnerUser) {
+          winnerUser.balance = (winnerUser.balance ?? 0) + tournament.tournamentPrize;
+          await winnerUser.save();
+          console.log(`💸 Prize of ${tournament.tournamentPrize} added to ${winnerUser.lichessId}'s balance`);
+        } else {
+          console.warn(`⚠️ Winner ${tournament.winner} not found in userModel`);
+        }
+      }
+
       console.log(`🏆 Tournament completed with winner: ${tournament.winner}`);
       return {
         success: true,
