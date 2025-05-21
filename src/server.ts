@@ -12,6 +12,8 @@ import swaggerUI from "swagger-ui-express";
 import lichessRouter from "./routes/lichess_route";
 import cors from "cors";
 import apiRouter from "./routes/lichess_api_route"
+import liveStreamRoutes from "./routes/live_stream_routes";
+
 
 const app = express();
 
@@ -56,6 +58,7 @@ app.use((req, res, next) => {
 app.use("/auth", authController);
 app.use("/auth/lichess", lichessRouter);
 app.use("/api/lichess", apiRouter);
+app.use("/live", liveStreamRoutes);
 console.log("✅ API routes loaded under /api/lichess");
 
 // app.use("/api/lichess", lichessRouter);

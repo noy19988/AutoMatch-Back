@@ -2,6 +2,7 @@ import TournamentModel from "../models/tournament_model";
 import userModel from "../models/user_model";
 import axios from "axios";
 
+
 // ממשק תגובת Lichess
 interface LichessChallengeResponse {
   id: string;
@@ -63,6 +64,14 @@ export const advanceTournamentRound = async (tournamentId: string) => {
       };
     }
 
+    // זיהוי משחקים שסומנו כ"finished" אבל אין להם מנצח
+    const noWinnerMatches = lastBracket.matches.filter(
+      (m) => FINISHED_RESULTS.includes(m.result as string) && !m.winner
+    );
+    if (noWinnerMatches.length > 0) {
+      console.warn(`⚠️ ${noWinnerMatches.length} finished matches have no winner:`, noWinnerMatches.map(m => `${m.player1} vs ${m.player2}`));
+    }
+
     const winners = lastBracket.matches
       .map((m) => m.winner)
       .filter((w): w is string => Boolean(w) && w !== "draw");
@@ -70,6 +79,17 @@ export const advanceTournamentRound = async (tournamentId: string) => {
     const allWinners = [...winners, ...tournament.advancingPlayers];
     const uniqueWinners = [...new Set(allWinners)];
     console.log(`✅ Found ${uniqueWinners.length} advancing players: ${uniqueWinners.join(', ')}`);
+
+    // ❗ הגנה אם אין שחקנים מתקדמים
+    if (uniqueWinners.length === 0) {
+      console.warn(`⚠️ No advancing players found for tournament ${tournamentId}, skipping advancement.`);
+      return {
+        success: false,
+        message: "No advancing players found",
+        completed: false,
+        winner: null
+      };
+    }
 
     // סיום הטורניר אם נשאר שחקן אחד
     if (
@@ -79,6 +99,7 @@ export const advanceTournamentRound = async (tournamentId: string) => {
       tournament.status = "completed";
       tournament.winner = uniqueWinners[0] || null;
       await tournament.save();
+
       if (tournament.winner && tournament.tournamentPrize > 0) {
         const winnerUser = await userModel.findOne({ lichessId: tournament.winner });
         if (winnerUser) {
@@ -224,5 +245,6 @@ export const advanceTournamentRound = async (tournamentId: string) => {
     throw error;
   }
 };
+
 
 export default advanceTournamentRound;

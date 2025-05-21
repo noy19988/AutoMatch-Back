@@ -8,6 +8,7 @@ import { askGeminiRaw } from "../api/GeminiApi";
 import TournamentModel from "../models/tournament_model";
 import { advanceTournamentRound } from "./tournament_logic"; // 💡 חשוב לייבא נכון
 import mongoose from "mongoose";
+import  { TournamentDocument } from "../models/tournament_model";
 
 const getBracketName = (playerCount: number): string => {
   switch (playerCount) {
@@ -499,6 +500,22 @@ const joinLobby = async (req: Request, res: Response) => {
     if (!tournament.playerIds.includes(username)) {
       tournament.playerIds.push(username);
       await tournament.save();
+    
+      // 👇 Check if lobby just became full
+      if (tournament.playerIds.length === tournament.maxPlayers) {
+        const io = req.app.get("socketio"); // 🔌 Get the socket instance
+    
+        // Assume the creator is the first player
+        const creator = tournament.playerIds[0]; 
+    
+        // Emit to the creator only
+        io.to(creator).emit("lobbyFull", {
+          tournamentId: tournament._id,
+          tournamentName: tournament.tournamentName,
+        });
+    
+        console.log(`📢 Emitted 'lobbyFull' to ${creator}`);
+      }
     }
 
     res.json({ message: "Joined", tournament });
@@ -1024,7 +1041,7 @@ export const detectCheating = async (req: Request, res: Response) => {
     
     // יצירת AbortController לקביעת timeout
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 שניות timeout
+    const timeoutId = setTimeout(() => controller.abort(), 3500); // 15 שניות timeout
     
     // בחירת הטוקן הטוב ביותר שיש לנו
     const authToken = playerUser?.lichessAccessToken || opponentToken || process.env.LICHESS_PERSONAL_TOKEN;
@@ -1378,6 +1395,292 @@ export const getGameDataWithPgn = async (gameId: string, username: string) => {
   console.log(`✅ מחזיר מידע מלא:`, JSON.stringify(result, null, 2));
   return result;
 };
+
+
+export const pollTournamentResults = async () => {
+  try {
+    console.log("🔄 Starting tournament results polling cycle");
+
+    const activeTournaments = await TournamentModel.find({ status: "active" });
+    console.log(`📊 Found ${activeTournaments.length} active tournaments to check`);
+
+    for (const tournament of activeTournaments) {
+      console.log(`🔍 Checking tournament: ${tournament._id} (${tournament.tournamentName})`);
+
+      // בודקים את ה-stage של הטורניר
+const stage = tournament.currentStage;
+
+// בדיקה מפורשת אם הטורניר עדיין לא התחיל (אין לו bracket)
+if (tournament.bracket.length === 0) {
+  // הטורניר עוד לא התחיל - נדלג עליו בשקט, בלי להציג אזהרה
+  continue;
+} 
+// בדיקה אם ה-stage לא תקין (אחרי שהטורניר כבר התחיל)
+else if (stage < 0 || stage >= tournament.bracket.length) {
+  // במקרה זה, זו באמת שגיאה - נציג אזהרה
+  console.warn(`⚠️ Invalid currentStage (${stage}) in tournament ${tournament._id}`);
+  continue;
+}
+
+// אם הגענו לכאן, ה-stage תקין והטורניר התחיל כבר
+const currentBracket = tournament.bracket[stage];
+if (!currentBracket || !currentBracket.matches?.length) {
+  console.log(`ℹ️ No matches in current bracket for tournament ${tournament._id}`);
+  continue;
+}
+
+      let allMatchesComplete = true;
+
+      for (let matchIndex = 0; matchIndex < currentBracket.matches.length; matchIndex++) {
+        const match = currentBracket.matches[matchIndex];
+
+        const gameId = match.lichessUrl.split('/').pop()?.split('?')[0];
+        if (!gameId) {
+          console.warn(`⚠️ Invalid Lichess URL: ${match.lichessUrl}`);
+          allMatchesComplete = false;
+          continue;
+        }
+
+        // אם המשחק כבר סומן כגמור, נדלג עליו
+        if (match.result === "finished" && match.winner !== undefined) {
+          console.log(`✅ Match already finished: ${gameId}, winner: ${match.winner || 'Draw'}`);
+          continue;
+        }
+
+        console.log(`🔄 Fetching game status for: ${gameId}`);
+
+        try {
+          const response = await fetchWithRetry(
+            `https://lichess.org/game/export/${gameId}`,
+            {
+              headers: {
+                Accept: "application/x-chess-pgn"
+              },
+              timeout: 3500
+            },
+            3
+          );
+
+          // בדיקה חשובה: אם התשובה אינה תקינה (404 וכו'), נדלג על המשחק הזה ונסמן שלא כל המשחקים הסתיימו
+          if (!response.ok) {
+            console.error(`❌ Failed to fetch PGN for game ${gameId}: ${response.status}`);
+            console.log(`⚠️ Game ${gameId} returned ${response.status} - this usually means the game hasn't started yet or the ID is invalid`);
+            allMatchesComplete = false;
+            continue; // חשוב! דילוג על שאר הלוגיקה עבור משחק זה
+          }
+
+          const pgn = await response.text();
+          console.log(`📊 Received PGN for game ${gameId}, length: ${pgn.length} characters`);
+          
+          // מיצוי התוצאה מה-PGN
+          const resultMatch = pgn.match(/\[Result "(.*?)"\]/);
+          const result = resultMatch?.[1] ?? null;
+
+          console.log(`📋 Found result for game ${gameId}: "${result}"`);
+
+          // תיקון חשוב: בליצ'ס, הסימן "*" מציין משחק בתהליך, לא תיקו!
+          if (!result || result === "*") {
+            console.log(`⏳ Game ${gameId} still in progress (result: ${result})`);
+            allMatchesComplete = false;
+            continue; // דלג אם המשחק עדיין בתהליך
+          }
+
+          // קביעת המנצח לפי צבע - רק עבור משחקים שהסתיימו באמת
+          const winner = 
+            result === "1-0" ? "white" :
+            result === "0-1" ? "black" :
+            result === "1/2-1/2" ? null :
+            null;
+
+          // קביעת ה-ID של המנצח (player1/player2)
+          let winnerId: string | null = null;
+          if (winner === "white") winnerId = match.player1;
+          else if (winner === "black") winnerId = match.player2;
+          // אם התוצאה היא תיקו או לא ברורה, נשאיר winnerId כ-null
+
+          console.log(`🔄 About to update game ${gameId} with: result=${result}, winner=${winner}, winnerId=${winnerId ?? "Draw"}`);
+
+          // עדכון התוצאה במסד הנתונים
+          const updateResult = await TournamentModel.updateOne(
+            {
+              _id: tournament._id,
+              [`bracket.${stage}.matches.${matchIndex}.lichessUrl`]: { $regex: gameId }
+            },
+            {
+              $set: {
+                [`bracket.${stage}.matches.${matchIndex}.result`]: "finished",
+                [`bracket.${stage}.matches.${matchIndex}.winner`]: winnerId
+              }
+            }
+          );
+
+          console.log(`📝 Updated DB for game ${gameId}, modifiedCount=${updateResult.modifiedCount}`);
+
+          // הוספת השחקן המנצח לרשימת המתקדמים (רק אם יש מנצח)
+          if (winnerId && !tournament.advancingPlayers.includes(winnerId)) {
+            await TournamentModel.updateOne(
+              { _id: tournament._id },
+              { $addToSet: { advancingPlayers: winnerId } }
+            );
+            console.log(`🏁 ${winnerId} added to advancing players`);
+          }
+
+        } catch (err) {
+          console.error(`❌ Error checking game ${gameId}:`, err);
+          allMatchesComplete = false; // חשוב! סימון שלא כל המשחקים הסתיימו במקרה של שגיאה
+        }
+      }
+
+      // בדיקה אם כל המשחקים הסתיימו ויש צורך לקדם את הטורניר
+      if (allMatchesComplete) {
+        const advancing = tournament.advancingPlayers;
+        console.log(`✅ All matches complete for tournament ${tournament._id}`);
+        console.log(`👥 Advancing players: ${JSON.stringify(advancing)}`);
+
+        // אם יש רק שחקן אחד מתקדם, זהו המנצח בטורניר
+        if (advancing.length === 1) {
+          const winner = advancing[0];
+          console.log(`🏆 Tournament winner determined: ${winner}`);
+
+          // עדכון הטורניר כמסתיים עם המנצח
+          await TournamentModel.updateOne(
+            { _id: tournament._id },
+            {
+              $set: {
+                winner,
+                status: "completed"
+              }
+            }
+          );
+
+          // חלוקת הפרס למנצח
+          if (tournament.tournamentPrize > 0) {
+            const winnerUser = await userModel.findOne({ lichessId: winner });
+            if (winnerUser) {
+              winnerUser.balance = (winnerUser.balance ?? 0) + tournament.tournamentPrize;
+              await winnerUser.save();
+              console.log(`💰 Prize awarded to ${winner}: ${tournament.tournamentPrize}`);
+            } else {
+              console.warn(`⚠️ Winner ${winner} not found in database, prize not awarded`);
+            }
+          }
+
+        } else if (advancing.length > 1) {
+          // אם יש יותר משחקן אחד, נקדם לסיבוב הבא
+          console.log(`🧬 Advancing to next round with ${advancing.length} players`);
+          await advanceTournamentRound((tournament._id as mongoose.Types.ObjectId).toString());
+
+        } else {
+          // מקרה שבו אין שחקנים מתקדמים
+          console.warn(`⚠️ No advancing players yet for tournament ${tournament._id}. Skipping completion.`);
+        }
+      } else {
+        console.log(`⏳ Some matches still pending in tournament ${tournament._id}. Waiting for next cycle.`);
+      }
+    }
+
+    console.log("✅ Tournament polling cycle completed");
+  } catch (err) {
+    console.error("❌ Error in pollTournamentResults:", err);
+  }
+};
+
+
+
+export const updateMatchResultByLichessUrlFromPolling = async (
+  tournamentId: string,
+  lichessUrl: string,
+  winner: "white" | "black" | undefined,
+  status: string
+) => {
+  try {
+    console.log(`🔄 Updating match result for tournament ${tournamentId}, game ${lichessUrl}`);
+    
+    // Extract game ID from URL
+    const gameId = lichessUrl.split('/').pop()?.split('?')[0];
+    if (!gameId) {
+      console.error(`❌ Invalid game URL format: ${lichessUrl}`);
+      return;
+    }
+    
+    // Find tournament directly using findOne to avoid type casting issues
+    const tournament = await TournamentModel.findOne({ _id: tournamentId });
+    if (!tournament) {
+      console.error(`❌ Tournament not found: ${tournamentId}`);
+      return;
+    }
+    
+    // Find the matching bracket and match
+    let matchFound = false;
+    let bracketIndex = -1;
+    let matchIndex = -1;
+    
+    for (let i = 0; i < tournament.bracket.length; i++) {
+      const bracket = tournament.bracket[i];
+      for (let j = 0; j < bracket.matches.length; j++) {
+        const match = bracket.matches[j];
+        const currentGameId = match.lichessUrl.split('/').pop()?.split('?')[0];
+        
+        if (currentGameId === gameId) {
+          bracketIndex = i;
+          matchIndex = j;
+          matchFound = true;
+          break;
+        }
+      }
+      if (matchFound) break;
+    }
+    
+    if (!matchFound) {
+      console.error(`❌ Match not found for game ${gameId} in tournament ${tournamentId}`);
+      return;
+    }
+    
+    const match = tournament.bracket[bracketIndex].matches[matchIndex];
+    
+    // Determine winner
+    let winnerId = null;
+    if (winner === "white") {
+      winnerId = match.player1;
+    } else if (winner === "black") {
+      winnerId = match.player2;
+    }
+    
+    console.log(`🏆 Winner determined: ${winner} → ${winnerId}`);
+    
+    // Update the match directly
+    const updateResult = await TournamentModel.updateOne(
+      { _id: tournamentId },
+      { 
+        $set: { 
+          [`bracket.${bracketIndex}.matches.${matchIndex}.result`]: status,
+          [`bracket.${bracketIndex}.matches.${matchIndex}.winner`]: winnerId
+        }
+      }
+    );
+    
+    console.log(`📝 Match update result: modified=${updateResult.modifiedCount}`);
+    
+    // If winner exists and is not already in advancing players, add them
+    if (winnerId && !tournament.advancingPlayers.includes(winnerId)) {
+      await TournamentModel.updateOne(
+        { _id: tournamentId },
+        { $addToSet: { advancingPlayers: winnerId } }
+      );
+      
+      console.log(`🏁 Added ${winnerId} to advancing players`);
+      
+      // Check if we should advance to next round
+      await advanceTournamentRound(tournamentId);
+    }
+    
+    console.log(`✅ Successfully updated match result for game ${gameId}`);
+  } catch (error) {
+    console.error(`❌ Error updating match result:`, error);
+  }
+};
+
+
 
 export default {
   detectCheating,
